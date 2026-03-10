@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# qmd-watch - Keep qmd index in sync with workspace changes (__AGENT_ID__)
+#
+# Uses fswatch for recursive file watching (macOS equivalent of inotifywait).
+# Runs as a long-running LaunchAgent.
+#
+# Requires: fswatch (brew install fswatch), qmd
+set -uo pipefail
+
+WORKSPACE="__WORKSPACE_DIR__"
+DEBOUNCE=${QMD_WATCH_DEBOUNCE:-3}
+AGENT_LOCK="/tmp/qmd-watch-__AGENT_ID__.lock"
+EMBED_LOCK="/tmp/qmd-embed-global.lock"
+
+export QMD_CONFIG_DIR="$WORKSPACE/.qmd"
+export INDEX_PATH="$WORKSPACE/.qmd/index.sqlite"
+export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+command -v fswatch &>/dev/null || { echo "Error: fswatch not found. Install with: brew install fswatch" >&2; exit 1; }
+command -v qmd &>/dev/null || { echo "Error: qmd not found" >&2; exit 1; }
+
+# mkdir-based locking (atomic on all Unix, no flock needed)
+acquire_lock() {
+    mkdir "$1" 2>/dev/null
+}
+release_lock() {
+    rmdir "$1" 2>/dev/null || true
+}
+
+do_sync() {
+    # Prevent concurrent syncs for this agent
+    if ! acquire_lock "$AGENT_LOCK"; then
+        echo "Sync already running for __AGENT_ID__, skipping"
+        return
+    fi
+    trap 'release_lock "$AGENT_LOCK"' RETURN
+
+    # Run text extraction (warn on failure, don't abort)
+    if [ -x "$WORKSPACE/.scripts/extract" ]; then
+        "$WORKSPACE/.scripts/extract" sync 2>&1 || {
+            echo "WARNING: extract sync failed (rc=$?)" >&2
+        }
+    fi
+
+    # Update BM25 index
+    qmd update || {
+        echo "ERROR: qmd update failed (rc=$?)" >&2
+        return 1
+    }
+
+    # Serialize embedding across all agents (memory-heavy: loads ~314MB GGUF model)
+    # Spin-wait with backoff for global embed lock
+    local wait=1
+    while ! acquire_lock "$EMBED_LOCK"; do
+        echo "Waiting for embed lock (another agent embedding)..."
+        sleep "$wait"
+        wait=$((wait < 10 ? wait + 1 : 10))
+    done
+    qmd embed
+    local rc=$?
+    release_lock "$EMBED_LOCK"
+    if [ $rc -ne 0 ]; then
+        echo "ERROR: qmd embed failed (rc=$rc)" >&2
+        return 1
+    fi
+}
+
+cleanup() {
+    release_lock "$AGENT_LOCK"
+    release_lock "$EMBED_LOCK"  # only removes if we hold it
+    echo "Stopped (pid: $$)"
+    exit 0
+}
+trap cleanup INT TERM
+
+# Clean up stale locks from previous crashes
+for lock in "$AGENT_LOCK" "$EMBED_LOCK"; do
+    if [ -d "$lock" ]; then
+        # Check if the lock is stale (older than 30 minutes)
+        if [ "$(find "$lock" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
+            echo "Removing stale lock: $lock"
+            rmdir "$lock" 2>/dev/null || true
+        fi
+    fi
+done
+
+if [ ! -d "$WORKSPACE" ]; then
+    echo "ERROR: Workspace directory does not exist: $WORKSPACE" >&2
+    exit 1
+fi
+
+echo "Started (debounce: ${DEBOUNCE}s, pid: $$, workspace: $WORKSPACE)"
+
+# Initial sync on startup
+do_sync || echo "WARNING: initial sync failed, will retry on next file change" >&2
+
+# Watch for changes using fswatch with batch mode
+# fswatch --batch-marker sends "NoOp" after each batch of events
+while IFS= read -r -d '' path; do
+    [[ "$path" == "NoOp" ]] && do_sync || true
+done < <(fswatch \
+    --latency "$DEBOUNCE" \
+    --recursive \
+    --batch-marker \
+    -E \
+    -e '/\.git/' \
+    -e '/\.qmd/' \
+    -e '/\.scripts/extract-cache/' \
+    -0 \
+    "$WORKSPACE")

@@ -11,13 +11,24 @@
     executable: /bin/bash
     creates: /home/ubuntu/.bun/bin/bun
 
+- name: Check installed qmd version
+  ansible.builtin.shell: |
+    export PATH="$HOME/.bun/bin:$PATH"
+    qmd --version 2>/dev/null | awk '{print $2}' || echo "none"
+  args:
+    executable: /bin/bash
+  register: qmd_installed_version
+  changed_when: false
+
 - name: Install qmd via bun
   ansible.builtin.shell: |
     export PATH="$HOME/.bun/bin:$PATH"
     bun install -g "@tobilu/qmd@{{ qmd_version }}"
   args:
     executable: /bin/bash
-    creates: /home/ubuntu/.bun/bin/qmd
+  when: qmd_installed_version.stdout != qmd_version
+  notify:
+    - restart qmd-http services
 
 - name: Install uv (for extract script inline deps)
   ansible.builtin.shell: curl -LsSf https://astral.sh/uv/install.sh | sh

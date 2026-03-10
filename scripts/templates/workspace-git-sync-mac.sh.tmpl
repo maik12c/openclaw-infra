@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+cd __WORKSPACE_DIR__
+
+# Ensure branch is named 'main' regardless of how it was initialized
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$CURRENT_BRANCH" != "main" ] && [ -n "$CURRENT_BRANCH" ]; then
+    git branch -m "$CURRENT_BRANCH" main
+fi
+
+# Untrack any files now covered by .gitignore (e.g. .cache/, .local/ added before
+# .gitignore was provisioned). git ls-files -ci lists tracked-but-ignored files.
+# Note: BSD xargs (macOS) does NOT skip empty input with -0 (unlike GNU xargs -r).
+# Suppress errors when there are no tracked-but-ignored files (the common case).
+git ls-files -ci --exclude-standard -z | xargs -0 git rm --cached 2>/dev/null || true
+
+# Commit any local changes first (so they're never lost)
+git add -A
+if ! git diff --cached --quiet; then
+    git commit -m "Auto-sync: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+
+# Reconcile with remote before pushing (local workspace takes precedence on conflict).
+# Uses merge (not rebase) — simpler for auto-synced workspaces, avoids rebase complexity.
+git fetch origin main 2>/dev/null || true
+if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    if ! git merge -X ours origin/main --no-edit 2>/dev/null; then
+        git merge --abort 2>/dev/null || true
+        echo "WARNING: Cannot merge, forcing local state for __AGENT_ID__" >&2
+        git push --force-with-lease origin main
+    fi
+fi
+
+# Push if we have commits ahead of remote
+if [ "$(git rev-list --count origin/main..HEAD 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    git push origin main
+fi

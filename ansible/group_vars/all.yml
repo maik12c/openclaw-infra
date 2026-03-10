@@ -117,7 +117,7 @@ force_qmd_reindex: false
 
 # qmd semantic search settings
 # @tobilu/qmd published on npm — pin with semver
-qmd_version: "1.0.7"
+qmd_version: "1.1.6"
 # Base port for qmd HTTP daemons (one per agent, assigned by position in qmd_workspaces).
 # Port N+0 = first agent, N+1 = second, etc. Re-run --tags qmd,plugins if agents change.
 qmd_http_base_port: 8191

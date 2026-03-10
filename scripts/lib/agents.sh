@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Shared agent resolution from openclaw.yml (the single source of truth).
+#
+# Reads openclaw_agents and derives workspace naming conventions:
+#   - Workspace dir: <id>-workspace
+#   - GitHub repo: openclaw-workspace (default) or openclaw-workspace-<id>
+#
+# Requires: yq, jq
+#
+# Usage:
+#   source "$(dirname "$0")/lib/agents.sh"
+#   for id in $(get_agent_ids); do
+#       repo=$(workspace_repo_name "$id")
+#       echo "$id → $repo"
+#   done
+
+_AGENTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_OPENCLAW_YML="$_AGENTS_LIB_DIR/../../ansible/group_vars/openclaw.yml"
+
+for _cmd in yq jq; do
+    command -v "$_cmd" &>/dev/null || { echo "ERROR: $_cmd not found. Install with: brew install $_cmd" >&2; exit 1; }
+done
+
+[ -f "$_OPENCLAW_YML" ] || { echo "ERROR: openclaw.yml not found: $_OPENCLAW_YML" >&2; exit 1; }
+
+# Parse once, cache the result
+_AGENTS_JSON=$(yq -o json '.openclaw_agents // []' "$_OPENCLAW_YML")
+
+# All agent IDs, one per line
+get_agent_ids() {
+    echo "$_AGENTS_JSON" | jq -r '.[].id'
+}
+
+# Number of agents
+get_agent_count() {
+    echo "$_AGENTS_JSON" | jq 'length'
+}
+
+# Exit 0 if agent is the default, 1 otherwise
+is_default_agent() {
+    [ "$(echo "$_AGENTS_JSON" | jq -r --arg id "$1" '.[] | select(.id == $id) | .is_default // false')" = "true" ]
+}
+
+# GitHub repo name: openclaw-workspace (default) or openclaw-workspace-<id>
+workspace_repo_name() {
+    if is_default_agent "$1"; then
+        echo "openclaw-workspace"
+    else
+        echo "openclaw-workspace-$1"
+    fi
+}
