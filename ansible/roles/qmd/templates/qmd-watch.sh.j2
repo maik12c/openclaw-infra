@@ -12,6 +12,50 @@ WORKSPACE="{{ item.workspace_dir }}"
 DEBOUNCE=${QMD_WATCH_DEBOUNCE:-3}
 EMBED_LOCK="/tmp/qmd-embed-global.lock"
 
+export_beads() {
+    local jsonl="$WORKSPACE/.beads/issues.jsonl"
+    local export_dir="$WORKSPACE/.beads/qmd-export"
+    local marker="$export_dir/.last-export"
+
+    [ -f "$jsonl" ] || return 0
+
+    # Skip if export is up-to-date
+    if [ -f "$marker" ] && [ ! "$jsonl" -nt "$marker" ]; then
+        return 0
+    fi
+
+    mkdir -p "$export_dir"
+
+    # Clean existing exports and re-export fresh
+    find "$export_dir" -maxdepth 1 -name '*.md' -delete
+
+    local count=0
+    while IFS= read -r line; do
+        local id title status priority issue_type description
+        id=$(echo "$line" | jq -r '.id // empty') || continue
+        [ -n "$id" ] || continue
+
+        title=$(echo "$line" | jq -r '.title // ""')
+        status=$(echo "$line" | jq -r '.status // ""')
+        priority=$(echo "$line" | jq -r '.priority // ""')
+        issue_type=$(echo "$line" | jq -r '.issue_type // ""')
+        description=$(echo "$line" | jq -r '.description // ""')
+
+        cat > "$export_dir/${id}.md" <<BEADSEOF
+# ${title}
+- **Status:** ${status}
+- **Priority:** P${priority}
+- **Type:** ${issue_type}
+
+${description}
+BEADSEOF
+        count=$((count + 1))
+    done < "$jsonl"
+
+    touch "$marker"
+    echo "Exported $count beads issues to $export_dir"
+}
+
 do_sync() {
     # Prevent concurrent syncs for this agent via flock
     (
@@ -24,6 +68,12 @@ do_sync() {
                 logger -t qmd-watch "extract sync failed for {{ item.agent_id }}"
             }
         fi
+
+        # Export beads issues to markdown for qmd indexing
+        export_beads 2>&1 || {
+            echo "WARNING: beads export failed (rc=$?)" >&2
+            logger -t qmd-watch "beads export failed for {{ item.agent_id }}"
+        }
 
         # Update BM25 index (can run concurrently across agents)
         qmd update || {
