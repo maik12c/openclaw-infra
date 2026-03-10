@@ -119,31 +119,6 @@
       changed_when: "'UPDATED' in sandbox_result.stdout"
       notify: restart openclaw-gateway
 
-    - name: Set per-agent exec.host override for sandbox-disabled agents
-      ansible.builtin.shell: |
-        set -euo pipefail
-        export XDG_RUNTIME_DIR=/run/user/1000
-        AGENT_INDEX=$(jq -r --arg id {{ item.id | quote }} 'to_entries[] | select(.value.id == $id) | .key' /tmp/ansible_agents_current.json)
-        if [ -z "$AGENT_INDEX" ]; then
-            echo "ERROR: Agent {{ item.id | quote }} not found in agents list" >&2
-            exit 1
-        fi
-        CURRENT=$(openclaw config get "agents.list.${AGENT_INDEX}.exec.host" 2>/dev/null) || CURRENT=""
-        DESIRED="gateway"
-        if [ "$CURRENT" = "$DESIRED" ]; then
-            echo "OK"
-        else
-            openclaw config set "agents.list.${AGENT_INDEX}.exec.host" "$DESIRED"
-            echo "UPDATED: {{ item.id }} exec.host → gateway"
-        fi
-      args:
-        executable: /bin/bash
-      loop: "{{ openclaw_agents | selectattr('sandbox_mode', 'defined') | selectattr('sandbox_mode', 'equalto', 'off') | list }}"
-      loop_control:
-        label: "{{ item.id }}"
-      register: exec_host_result
-      changed_when: "'UPDATED' in exec_host_result.stdout"
-      notify: restart openclaw-gateway
   always:
     - name: Clean up current agents temp file
       ansible.builtin.file:
