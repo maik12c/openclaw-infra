@@ -51,3 +51,7 @@ backups/
 ansible/*.retry
 ansible/inventory/__pycache__/
 ansible/group_vars/openclaw.yml
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
