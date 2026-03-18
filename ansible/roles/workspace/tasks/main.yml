@@ -106,6 +106,15 @@
         CHANGED="yes"
     fi
 
+    # Disable global beads hooks for workspace sync operations.
+    # The global core.hooksPath (.beads/hooks) uses bd shims that may not match
+    # the installed bd version, breaking git commit/merge in Ansible and auto-sync.
+    CURRENT_HOOKS=$(git config --local core.hooksPath 2>/dev/null || echo "")
+    if [ "$CURRENT_HOOKS" != ".git/hooks" ]; then
+        git config --local core.hooksPath .git/hooks
+        CHANGED="yes"
+    fi
+
     # Set remote URL — only if different
     ALIAS_URL=$(echo "{{ item.item.repo_url }}" | sed "s/github\.com/{{ item.item.ssh_alias }}/")
     CURRENT_URL=$(git remote get-url origin 2>/dev/null || echo "")
