@@ -9,6 +9,22 @@ if [ "$CURRENT_BRANCH" != "main" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BR
     git branch -m "$CURRENT_BRANCH" main
 fi
 
+# Guard: detect onboard wipe. BOOTSTRAP.md only exists right after `openclaw onboard`
+# runs — it regenerates all context files from blank templates and creates this file.
+# If we see it, the workspace was just wiped. Restore from remote instead of committing
+# the blank templates (which would overwrite the real content in GitHub).
+if [ -f "BOOTSTRAP.md" ]; then
+    echo "ONBOARD DETECTED: BOOTSTRAP.md present — restoring from remote for {{ item.agent_id }}" >&2
+    git fetch origin main 2>/dev/null || true
+    if git rev-parse --verify origin/main >/dev/null 2>&1; then
+        git checkout origin/main -- . 2>/dev/null || true
+        rm -f BOOTSTRAP.md
+        echo "Restored workspace from remote, removed BOOTSTRAP.md" >&2
+    else
+        echo "WARNING: No remote content to restore from — blank templates will be committed" >&2
+    fi
+fi
+
 # Untrack any files now covered by .gitignore (e.g. .cache/, .local/ added before
 # .gitignore was provisioned). git ls-files -ci lists tracked-but-ignored files.
 git ls-files -ci --exclude-standard -z | xargs -0 -r git rm --cached
