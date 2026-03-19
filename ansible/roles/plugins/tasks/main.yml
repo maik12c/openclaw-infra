@@ -1414,6 +1414,9 @@
     OPENCLAW_BIN=$(which openclaw 2>/dev/null || echo "")
     NODE_ID=$(jq -r '.tools.exec.node // empty' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "")
     GW_TOKEN=$(jq -r '.gateway.auth.token // empty' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "")
+    # In 2026.3.13+, nodes is owner-only. Loopback shared-token auth lacks owner scope.
+    # Route through Tailscale Serve so the CLI gets full auth via allowTailscale.
+    GW_URL="wss://$(tailscale status --self --json 2>/dev/null | jq -r .Self.DNSName | sed s/\\.$//)"
     if [ -n "$NODE_ID" ] && [ -n "$OPENCLAW_BIN" ] && [ -x "$NODE_EXEC_BINARY" ]; then
     {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'node-exec') %}
         SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
@@ -1421,7 +1424,8 @@
             --arg node_id "$NODE_ID" \
             --arg openclaw_bin "$OPENCLAW_BIN" \
             --arg gw_token "$GW_TOKEN" \
-            '. + [{name: $name, transport: "stdio", command: $cmd, env: {NODE_ID: $node_id, OPENCLAW_BIN: $openclaw_bin, XDG_RUNTIME_DIR: "/run/user/1000", OPENCLAW_TOKEN: $gw_token, DEFAULT_CWD: "/private/tmp"}}]')
+            --arg gw_url "$GW_URL" \
+            '. + [{name: $name, transport: "stdio", command: $cmd, env: {NODE_ID: $node_id, OPENCLAW_BIN: $openclaw_bin, XDG_RUNTIME_DIR: "/run/user/1000", OPENCLAW_TOKEN: $gw_token, CLAWDBOT_GATEWAY_URL: $gw_url, CLAWDBOT_GATEWAY_TOKEN: $gw_token, DEFAULT_CWD: "/private/tmp"}}]')
     {% endfor %}
     else
         echo "NOTE: Skipping node-exec MCP servers (node_id='${NODE_ID}', binary='${NODE_EXEC_BINARY}')" >&2
