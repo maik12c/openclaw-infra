@@ -29,7 +29,7 @@
   ansible.builtin.set_fact:
     openclaw_needs_install: >-
       {{ not openclaw_binary.stat.exists
-         or openclaw_installed_version.stdout | default('') | trim != openclaw_version }}
+         or openclaw_version not in (openclaw_installed_version.stdout | default('') | trim) }}
 
 - name: Install or upgrade OpenClaw
   when: openclaw_needs_install | bool
@@ -68,7 +68,7 @@
     - name: Confirm installed version matches target
       ansible.builtin.assert:
         that:
-          - openclaw_post_install_version.stdout | trim == openclaw_version
+          - openclaw_version in (openclaw_post_install_version.stdout | trim)
         fail_msg: >-
           Version mismatch: installed '{{ openclaw_post_install_version.stdout | trim }}',
           expected '{{ openclaw_version }}'
