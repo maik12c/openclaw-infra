@@ -1525,7 +1525,7 @@
 - name: Verify mcp-adapter plugin is loaded
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw plugins list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d' | jq -e '.plugins[] | select(.id == "openclaw-mcp-adapter")'
+    openclaw plugins list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d' | jq -e '.plugins[] | select(.id == "openclaw-mcp-adapter")'
   args:
     executable: /bin/bash
   changed_when: false

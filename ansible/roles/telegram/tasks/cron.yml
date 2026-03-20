@@ -52,7 +52,7 @@
         export XDG_RUNTIME_DIR=/run/user/1000
 
         # Read the gateway token from config
-        GW_TOKEN=$(openclaw config get gateway.auth.token 2>/dev/null | sed '/^\[mcp-adapter\]/d') || {
+        GW_TOKEN=$(openclaw config get gateway.auth.token 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || {
             echo "SKIP: cannot read gateway token" >&2
             exit 1
         }
@@ -137,7 +137,7 @@
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
     export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
-    openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d'
+    openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d'
   args:
     executable: /bin/bash
   register: existing_cron
@@ -307,7 +307,7 @@
         export XDG_RUNTIME_DIR=/run/user/1000
         export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
         for attempt in 1 2 3; do
-            RESULT=$(openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d')
+            RESULT=$(openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d')
             [ -n "$RESULT" ] && break
             sleep 5
         done
@@ -330,9 +330,9 @@
         that:
           - (final_cron.stdout | from_json).jobs | length >= active_cron_jobs | length
           - (active_cron_jobs | map(attribute='name') | sort | list) | difference((final_cron.stdout | from_json).jobs | map(attribute='name') | list) | length == 0
-      when: final_cron.stdout | default('') | length > 0
         fail_msg: >-
           Missing Ansible-managed cron jobs.
           Expected: {{ active_cron_jobs | map(attribute='name') | sort | list }}.
           Missing: {{ (active_cron_jobs | map(attribute='name') | list) | difference((final_cron.stdout | from_json).jobs | map(attribute='name') | list) }}.
           Server has {{ (final_cron.stdout | from_json).jobs | length }} total (including manually added).
+      when: final_cron.stdout | default('') | length > 0
