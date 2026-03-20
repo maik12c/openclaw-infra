@@ -215,12 +215,14 @@
         # Custom models: hash-based comparison (server enriches config with extra fields,
         # so direct JSON comparison always finds a diff). Hash the desired value instead.
         # When Groq voice is configured, the Groq provider is merged into the temp file at template time.
+        # Guard: if the config key was wiped (e.g. by onboard), force re-set even if hash matches.
         DESIRED_MODELS=$(cat /tmp/ansible-custom-models)
         HASH_DIR="/home/ubuntu/.openclaw/.ansible-hashes"
         mkdir -p "$HASH_DIR"
         DESIRED_HASH=$(echo "$DESIRED_MODELS" | jq -cS '.' | sha256sum | cut -d' ' -f1)
         CURRENT_HASH=$(cat "$HASH_DIR/custom-models" 2>/dev/null) || CURRENT_HASH=""
-        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ]; then
+        MODELS_EXISTS=$(openclaw config get models.mode 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || MODELS_EXISTS=""
+        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ] || [ -z "$MODELS_EXISTS" ]; then
             openclaw config set models --json "$DESIRED_MODELS"
             echo "$DESIRED_HASH" > "$HASH_DIR/custom-models"
             CHANGED="yes"
@@ -233,6 +235,12 @@
         {%   set _ = tool_allow.append("openclaw-mcp-adapter") %}
         {% endif %}
         check_set_json tools.sandbox.tools.allow '{{ tool_allow | to_json }}'
+
+        # Profile extension: v2026.3.13 made coding profile strict — plugin tools
+        # are blocked unless explicitly added via tools.alsoAllow
+        {% if openclaw_mcp_adapter is defined and mcp_adapter_installed.stat.exists %}
+        check_set_json tools.alsoAllow '["group:plugins"]'
+        {% endif %}
 
         # Plugin loading allowlist — only trusted plugins can load into gateway
         # Includes bundled plugins (device-pair, memory-core, etc.) because
