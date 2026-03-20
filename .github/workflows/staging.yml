@@ -149,7 +149,10 @@ jobs:
           OBSIDIAN_VAULT_PASSWORD: ${{ secrets.OBSIDIAN_VAULT_PASSWORD }}
         run: |
           cd pulumi
-          pulumi stack select staging 2>/dev/null || pulumi stack init staging
+          # Force-clean any stale stack from a previous interrupted run
+          # (pending operations from cancelled deploys prevent clean re-use)
+          pulumi stack rm staging --yes --force 2>/dev/null || true
+          pulumi stack init staging
 
           # Server config
           pulumi config set serverName openclaw-staging
@@ -250,6 +253,9 @@ jobs:
         if: always()
         run: |
           cd pulumi
+          # Cancel any in-flight operations, then sync state with reality
+          pulumi cancel --yes --stack staging 2>/dev/null || true
+          pulumi refresh --yes --stack staging 2>/dev/null || true
           pulumi destroy --yes --stack staging 2>/dev/null || true
           pulumi stack rm staging --yes --force 2>/dev/null || true
 
