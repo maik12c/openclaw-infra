@@ -2,7 +2,7 @@
 - name: Get existing agents
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw agents list --json
+    openclaw agents list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d'
   args:
     executable: /bin/bash
   register: existing_agents
@@ -43,7 +43,7 @@
 - name: Refresh agent list for heartbeat targeting
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw agents list --json
+    openclaw agents list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d'
   args:
     executable: /bin/bash
   register: agents_current

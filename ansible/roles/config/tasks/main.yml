@@ -353,7 +353,7 @@
         export XDG_RUNTIME_DIR=/run/user/1000
 
         # Step 1: Get nodes status JSON (fail visibly if gateway is down)
-        NODES_RAW=$(openclaw nodes status --json 2>&1) || {
+        NODES_RAW=$(openclaw nodes status --json 2>/dev/null | sed '/^\[mcp-adapter\]/d') || {
             echo "WARNING: 'openclaw nodes status --json' failed (rc=$?): $NODES_RAW"
             echo "  Gateway may not be running. Check: systemctl --user status openclaw-gateway"
             NODES_RAW=""
