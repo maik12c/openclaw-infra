@@ -142,13 +142,15 @@ validate_deploy_key() {
 validate_deploy_key "workspace (main)" \
     "$(read_env PROVISION_WORKSPACE_REPO_URL)" \
     "$(read_env PROVISION_WORKSPACE_DEPLOY_KEY)"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    validate_deploy_key "workspace ($id)" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        validate_deploy_key "workspace ($id)" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")"
+    done
+fi
 
 # Status summary
 echo "  gateway_token: set"
@@ -161,16 +163,18 @@ echo "  groq_voice: $([ -n "$(read_env PROVISION_GROQ_API_KEY)" ] && echo "confi
 echo "  github_mcp (main): $([ -n "$(read_env PROVISION_GITHUB_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian (andy): $([ -n "$(read_env PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian_headless: $([ -n "$(read_env PROVISION_OBSIDIAN_AUTH_TOKEN)" ] && echo "configured" || echo "skipped")"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_USER_ID")" ] && echo "  telegram_${id}: configured"
-    [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_GROUP_ID")" ] && echo "  telegram_${id}_group: configured"
-    [ -n "$(read_env "PROVISION_WHATSAPP_${upper}_PHONE")" ] && echo "  whatsapp_${id}: configured"
-    echo "  workspace_sync ($id): $([ -n "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" ] && echo "configured" || echo "skipped")"
-    echo "  github_mcp ($id): $([ -n "$(read_env "PROVISION_GITHUB_TOKEN_${upper}")" ] && echo "configured" || echo "skipped")"
-    [ -n "$(read_env "PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL")" ] && echo "  obsidian ($id): configured"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_USER_ID")" ] && echo "  telegram_${id}: configured"
+        [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_GROUP_ID")" ] && echo "  telegram_${id}_group: configured"
+        [ -n "$(read_env "PROVISION_WHATSAPP_${upper}_PHONE")" ] && echo "  whatsapp_${id}: configured"
+        echo "  workspace_sync ($id): $([ -n "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" ] && echo "configured" || echo "skipped")"
+        echo "  github_mcp ($id): $([ -n "$(read_env "PROVISION_GITHUB_TOKEN_${upper}")" ] && echo "configured" || echo "skipped")"
+        [ -n "$(read_env "PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL")" ] && echo "  obsidian ($id): configured"
+    done
+fi
 
 # Read Codex auth credentials from local machine (optional)
 # Run `codex login` locally to create ~/.codex/auth.json before deploying.
@@ -243,12 +247,14 @@ append_deploy_key() {
     fi
 }
 append_deploy_key "workspace_deploy_key" "$(read_env PROVISION_WORKSPACE_DEPLOY_KEY)" "$SECRETS_FILE"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    append_deploy_key "workspace_${id}_deploy_key" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")" "$SECRETS_FILE"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        append_deploy_key "workspace_${id}_deploy_key" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")" "$SECRETS_FILE"
+    done
+fi
 
 # Append Codex auth credentials (block scalar preserves JSON structure)
 append_deploy_key "codex_auth_json" "$codex_auth_json" "$SECRETS_FILE"
