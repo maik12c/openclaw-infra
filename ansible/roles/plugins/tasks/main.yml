@@ -1418,7 +1418,7 @@
     GW_TOKEN=$(jq -r '.gateway.auth.token // empty' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "")
     # In 2026.3.13+, nodes is owner-only. Loopback shared-token auth lacks owner scope.
     # Route through Tailscale Serve so the CLI gets full auth via allowTailscale.
-    GW_URL="wss://$(tailscale status --self --json 2>/dev/null | jq -r .Self.DNSName | sed s/\\.$//)"
+    GW_URL="{{ _tailscale_wss_url }}"
     if [ -n "$NODE_ID" ] && [ -n "$OPENCLAW_BIN" ] && [ -x "$NODE_EXEC_BINARY" ]; then
     {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'node-exec') %}
         SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \

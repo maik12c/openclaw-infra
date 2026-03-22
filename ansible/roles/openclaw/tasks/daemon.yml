@@ -47,3 +47,23 @@
       when: >-
         daemon_service_version.stdout | trim == "" or
         daemon_service_version.stdout | trim != openclaw_binary_semver
+
+# Systemd drop-in: raise the WebSocket handshake timeout for the gateway process.
+# No-op on 2026.3.13 (env var gated behind VITEST), takes effect on 2026.3.14+.
+# See: https://github.com/openclaw/openclaw/issues/48167
+- name: Ensure systemd override directory exists
+  ansible.builtin.file:
+    path: /home/ubuntu/.config/systemd/user/openclaw-gateway.service.d
+    state: directory
+    mode: "0755"
+
+- name: Add handshake timeout override (forward-compat for openclaw/issues/48167)
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      Environment=OPENCLAW_HANDSHAKE_TIMEOUT_MS=10000
+    dest: /home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/handshake-timeout.conf
+    mode: "0644"
+  notify:
+    - reload user systemd
+    - restart openclaw-gateway

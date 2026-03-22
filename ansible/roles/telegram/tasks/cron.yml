@@ -4,25 +4,36 @@
 
 - name: Wait for gateway to stabilize after restart
   ansible.builtin.shell: |
+    set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
     GW_TOKEN=$(python3 -c "import json; print(json.load(open('/home/ubuntu/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
-    # Wait for health first (basic process check)
+    GW_URL="{{ _tailscale_wss_url }}"
+
+    # Wait for health first (basic process check via HTTP — always works)
     for i in $(seq 1 12); do
-        if openclaw health >/dev/null 2>&1; then
-            break
-        fi
+        if openclaw health >/dev/null 2>&1; then break; fi
         sleep 5
     done
-    # Then wait for WebSocket connectivity (MCP adapter initialization)
+
+    # Verify we have a Tailscale WSS URL
+    if [ -z "$GW_URL" ]; then
+        echo "ERROR: Tailscale WSS URL not available — cannot route CLI commands" >&2
+        echo "Ensure config role has run (sets gateway.tailscale.mode=serve)" >&2
+        exit 1
+    fi
+
+    # Wait for WebSocket connectivity through Tailscale Serve
+    # Routes via wss:// to bypass OpenClaw 2026.3.13 local loopback handshake bug
+    # See: https://github.com/openclaw/openclaw/issues/48167
     for i in $(seq 1 24); do
-        if OPENCLAW_TOKEN="$GW_TOKEN" openclaw cron list --json >/dev/null 2>&1; then
-            echo "Gateway is healthy and accepting WebSocket connections"
+        if openclaw cron list --json --url "$GW_URL" --token "$GW_TOKEN" >/dev/null 2>&1; then
+            echo "Gateway is healthy and accepting WebSocket connections via Tailscale Serve"
             exit 0
         fi
         sleep 10
     done
     echo "WARNING: Gateway did not become fully ready within 5 minutes" >&2
-    echo "Re-run: ./scripts/provision.sh --tags telegram"
+    echo "Re-run: ./scripts/provision.sh --tags telegram" >&2
     exit 1
   args:
     executable: /bin/bash
@@ -52,14 +63,17 @@
         export XDG_RUNTIME_DIR=/run/user/1000
 
         # Read the gateway token from config
-        GW_TOKEN=$(openclaw config get gateway.auth.token 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || {
-            echo "SKIP: cannot read gateway token" >&2
-            exit 1
-        }
+        GW_TOKEN=$(python3 -c "import json; print(json.load(open('/home/ubuntu/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
+        GW_URL="{{ _tailscale_wss_url }}"
 
-        # List devices with token auth to find pending request
+        if [ -z "$GW_URL" ]; then
+            echo "SKIP: Tailscale WSS URL not available for device pairing" >&2
+            exit 1
+        fi
+
+        # List devices via Tailscale Serve to find pending request
         # UUID-with-dashes regex matches request IDs (not paired device hex IDs)
-        DEVICES_OUT=$(OPENCLAW_TOKEN="$GW_TOKEN" openclaw devices list 2>&1) || {
+        DEVICES_OUT=$(openclaw devices list --url "$GW_URL" --token "$GW_TOKEN" 2>&1) || {
             echo "SKIP: devices list failed: $DEVICES_OUT" >&2
             exit 1
         }
@@ -71,8 +85,8 @@
             exit 1
         fi
 
-        # Approve the pending request
-        OPENCLAW_TOKEN="$GW_TOKEN" openclaw devices approve "$REQUEST_ID"
+        # Approve the pending request via Tailscale Serve
+        openclaw devices approve "$REQUEST_ID" --url "$GW_URL" --token "$GW_TOKEN"
         echo "PAIRED: approved request $REQUEST_ID"
       args:
         executable: /bin/bash
@@ -136,8 +150,7 @@
 - name: Get existing cron jobs
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
-    openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d'
+    openclaw cron list --json --url "{{ _tailscale_wss_url }}" --token "{{ _gw_token.stdout }}" 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d'
   args:
     executable: /bin/bash
   register: existing_cron
@@ -163,10 +176,9 @@
       ansible.builtin.shell: |
         set -euo pipefail
         export XDG_RUNTIME_DIR=/run/user/1000
-        export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
         IDS=$(jq -r --arg n "{{ item }}" '.jobs[] | select(.name == $n) | .id' /tmp/ansible-cron-list.json)
         for id in $IDS; do
-          output=$(openclaw cron remove "$id" 2>&1) || {
+          output=$(openclaw cron remove "$id" --url "{{ _tailscale_wss_url }}" --token "{{ _gw_token.stdout }}" 2>&1) || {
               if echo "$output" | grep -qi "not found\|does not exist"; then
                   true
               else
@@ -234,7 +246,8 @@
           ansible.builtin.shell: |
             set -euo pipefail
             export XDG_RUNTIME_DIR=/run/user/1000
-            export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
+            GW_URL="{{ _tailscale_wss_url }}"
+            GW_TOKEN="{{ _gw_token.stdout }}"
 
             # Build desired cron jobs as sorted JSON array (comparable fields only)
             DESIRED=$(jq -n '[]')
@@ -267,7 +280,7 @@
                 {% for job in active_cron_jobs %}
                 IDS=$(jq -r --arg n "{{ job.name }}" '.jobs[] | select(.name == $n) | .id' /tmp/ansible-cron-list.json)
                 for id in $IDS; do
-                    output=$(openclaw cron remove "$id" 2>&1) || {
+                    output=$(openclaw cron remove "$id" --url "$GW_URL" --token "$GW_TOKEN" 2>&1) || {
                         echo "$output" | grep -qi "not found\|does not exist" || { echo "ERROR: $output" >&2; exit 1; }
                     }
                     sleep 1
@@ -284,7 +297,8 @@
                     --session isolated \
                     --agent "{{ job.agent }}" \
                     --message "$MSG" \
-                    --deliver --channel {{ agent_channel_map[job.agent] | default('telegram') }} --to "{{ agent_deliver_map[job.agent] }}"
+                    --deliver --channel {{ agent_channel_map[job.agent] | default('telegram') }} --to "{{ agent_deliver_map[job.agent] }}" \
+                    --url "$GW_URL" --token "$GW_TOKEN"
                 sleep 1
                 {% endfor %}
 
@@ -305,9 +319,8 @@
     - name: Verify cron job count
       ansible.builtin.shell: |
         export XDG_RUNTIME_DIR=/run/user/1000
-        export OPENCLAW_TOKEN="{{ _gw_token.stdout }}"
         for attempt in 1 2 3; do
-            RESULT=$(openclaw cron list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d')
+            RESULT=$(openclaw cron list --json --url "{{ _tailscale_wss_url }}" --token "{{ _gw_token.stdout }}" 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d')
             [ -n "$RESULT" ] && break
             sleep 5
         done

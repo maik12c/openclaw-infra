@@ -119,6 +119,27 @@
         beads_docker_bridge_gateway_ip: "{{ docker_bridge_result.stdout | default('') | trim }}"
       tags: [always]
 
+    # Tailscale WSS URL: used by telegram and post_tasks to route CLI commands through
+    # Tailscale Serve instead of local loopback (broken in OpenClaw 2026.3.13).
+    # See: https://github.com/openclaw/openclaw/issues/48167
+    - name: Resolve Tailscale WSS URL for CLI commands
+      ansible.builtin.shell: |
+        FQDN=$(tailscale status --self --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')
+        if [ -n "$FQDN" ] && [ "$FQDN" != "null" ]; then
+          echo "wss://$FQDN"
+        fi
+      args:
+        executable: /bin/bash
+      register: _tailscale_wss_result
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Set Tailscale WSS URL fact
+      ansible.builtin.set_fact:
+        _tailscale_wss_url: "{{ _tailscale_wss_result.stdout | default('') | trim }}"
+      tags: [always]
+
     # Obsidian GitHub tokens: agent → PAT mapping for HTTPS clones
     - name: Use manually defined Obsidian GitHub tokens (override)
       ansible.builtin.set_fact:
@@ -237,7 +258,7 @@
               - --token
               - "{{ gateway_token }}"
               - --url
-              - ws://127.0.0.1:18789
+              - "{{ _tailscale_wss_url }}"
           environment:
             XDG_RUNTIME_DIR: "/run/user/1000"
             PATH: "/home/ubuntu/.npm-global/bin:{{ ansible_facts['env']['PATH'] }}"
@@ -245,3 +266,4 @@
           loop_control:
             label: "{{ item.value.displayName | default(item.value.deviceId[:16]) }}"
           no_log: true
+          when: _tailscale_wss_url | default('') | length > 0
