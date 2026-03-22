@@ -120,20 +120,6 @@
   changed_when: "'INITIALIZED' in dolt_init_shared.stdout"
   when: beads_shared_server_enabled | default(false)
 
-- name: Grant remote access for container connections
-  ansible.builtin.shell: |
-    set -euo pipefail
-    cd /home/ubuntu/.beads/shared-server/dolt
-    # Create wildcard user for TCP connections from Docker containers
-    dolt sql -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
-    dolt sql -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
-    echo "GRANTED"
-  args:
-    executable: /bin/bash
-  register: dolt_grant
-  changed_when: false
-  when: beads_shared_server_enabled | default(false)
-
 - name: Ensure systemd user directory exists
   ansible.builtin.file:
     path: /home/ubuntu/.config/systemd/user
@@ -163,7 +149,7 @@
   register: dolt_service_started
   when: beads_shared_server_enabled | default(false)
 
-- name: Verify shared Dolt server is listening
+- name: Wait for shared Dolt server to accept connections
   ansible.builtin.shell: |
     set -euo pipefail
     for i in $(seq 1 15); do
@@ -181,3 +167,16 @@
   when: >-
     beads_shared_server_enabled | default(false) and
     (dolt_service_deployed is changed or dolt_service_started is changed or dolt_init_shared is changed)
+
+- name: Grant remote access for container connections
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Connect to the running shared server (not embedded mode)
+    dolt sql -h {{ beads_docker_bridge_gateway_ip }} -P {{ beads_shared_server_port }} -u root \
+      -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
+    dolt sql -h {{ beads_docker_bridge_gateway_ip }} -P {{ beads_shared_server_port }} -u root \
+      -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: beads_shared_server_enabled | default(false)
