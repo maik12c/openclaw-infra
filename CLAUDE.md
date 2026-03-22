@@ -121,9 +121,11 @@ The OpenClaw CLI is installed locally and configured to talk to the remote gatew
 brew install openclaw-cli
 
 # Configure for remote gateway (one-time)
+GATEWAY_TOKEN=$(pulumi stack output openclawGatewayToken --show-secrets)
+[ -n "$GATEWAY_TOKEN" ] || { echo "ERROR: Gateway token is empty — aborting (would wipe gateway.remote.token)"; exit 1; }
 openclaw onboard --non-interactive --accept-risk --flow quickstart --mode remote \
   --remote-url "wss://openclaw-vps.<tailnet>.ts.net" \
-  --remote-token "$(pulumi stack output openclawGatewayToken --show-secrets)" \
+  --remote-token "$GATEWAY_TOKEN" \
   --skip-channels --skip-skills --skip-health --skip-ui --skip-daemon
 
 # Approve the CLI as a paired device (on first connect, via SSH)
@@ -309,9 +311,11 @@ cd ..
 ./scripts/verify.sh
 
 # Connect local CLI
+GATEWAY_TOKEN=$(pulumi stack output openclawGatewayToken --show-secrets)
+[ -n "$GATEWAY_TOKEN" ] || { echo "ERROR: Gateway token is empty — aborting (would wipe gateway.remote.token)"; exit 1; }
 openclaw onboard --non-interactive --accept-risk --flow quickstart --mode remote \
   --remote-url "wss://openclaw-vps.<tailnet>.ts.net" \
-  --remote-token "$(pulumi stack output openclawGatewayToken --show-secrets)" \
+  --remote-token "$GATEWAY_TOKEN" \
   --skip-channels --skip-skills --skip-health --skip-ui --skip-daemon
 ```
 
@@ -512,7 +516,7 @@ Architecture: VPS sandbox → `node-exec-mcp` (OPENCLAW_TOKEN auth, Tailscale Se
 - Two approval layers: gateway (`tools.exec.security/ask`) AND node (`~/.openclaw/exec-approvals.json`, must have `defaults.security: full`) — both must allow the command
 - CWD defaults to `/tmp` — VPS workspace path doesn't exist on Mac; pass `workdir=/Users/<you>` explicitly
 - LaunchAgent plist patched to `/opt/homebrew/bin/openclaw` symlink (survives `brew upgrade`)
-- **Token wipe danger:** Running `openclaw onboard --mode remote` without `--remote-token` wipes `gateway.remote.token` to empty string, silently breaking the node host (it starts but cannot authenticate). `setup-mac-node.sh` guards against this by auto-restoring from Pulumi. If node appears offline: check `~/.openclaw/openclaw.json` → `gateway.remote.token` is non-empty
+- **Token wipe danger:** Running `openclaw onboard --mode remote` with an empty `--remote-token` silently wipes `gateway.remote.token`, breaking the node host (it connects but cannot authenticate — zero errors logged). The onboard snippets above guard against this with an empty-token check. `setup-mac-node.sh` detects and recovers a wiped token at setup time. Diagnosis: check `~/.openclaw/openclaw.json` → `gateway.remote.token` is non-empty; backups live in `.bak` files
 
 ```bash
 ./scripts/setup-mac-node.sh                     # one-time Mac setup (installs LaunchAgent, sets approvals)

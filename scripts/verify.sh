@@ -273,6 +273,26 @@ else
     echo "   No cron jobs configured (optional)"
 fi
 
+# 15. Check local gateway token (Mac client only)
+LOCAL_CONFIG="$HOME/.openclaw/openclaw.json"
+TOKEN_LEN=$(OPENCLAW_CONFIG="$LOCAL_CONFIG" python3 -c "
+import json, os
+with open(os.environ['OPENCLAW_CONFIG']) as f:
+    d = json.load(f)
+print(len(d.get('gateway', {}).get('remote', {}).get('token', '')))" || echo "0")
+if [ "$TOKEN_LEN" -gt 0 ] 2>/dev/null; then
+    echo ""
+    echo "15. Checking local gateway token..."
+    check_pass "Local gateway.remote.token is set"
+elif [ -f "$LOCAL_CONFIG" ]; then
+    # Non-fatal: verify continues to report all checks
+    echo ""
+    echo "15. Checking local gateway token..."
+    check_fail "Local gateway.remote.token is EMPTY — node host cannot authenticate"
+    echo "   Fix: run ./scripts/setup-mac-node.sh or restore from backup:"
+    echo "   cat ~/.openclaw/openclaw.json.bak | python3 -c \"import json,sys; print(json.load(sys.stdin)['gateway']['remote']['token'])\""
+fi
+
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
 echo "                    Verification Complete"
