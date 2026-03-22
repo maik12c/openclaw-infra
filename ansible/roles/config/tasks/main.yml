@@ -347,10 +347,12 @@
 
         {% if beads_shared_server_enabled | default(false) %}
         # Beads shared Dolt server: containers connect to host-side dolt sql-server via TCP
-        check_set agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_HOST "{{ beads_docker_bridge_gateway_ip }}"
-        check_set agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT "{{ beads_shared_server_port }}"
-        check_set agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START "0"
-        check_set agents.defaults.sandbox.docker.env.BEADS_DOLT_SHARED_SERVER "1"
+        # Use check_set_json with quoted strings — openclaw config set auto-parses bare
+        # numbers (3308, 0, 1) as numeric types, but env vars must be strings.
+        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_HOST '"{{ beads_docker_bridge_gateway_ip }}"'
+        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT '"{{ beads_shared_server_port }}"'
+        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START '"0"'
+        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SHARED_SERVER '"1"'
         {% endif %}
 
         # Voice transcription — enable audio (provider merged into models JSON above; cleanup in secrets task)
