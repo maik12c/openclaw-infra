@@ -107,6 +107,9 @@
 - name: Initialize shared Dolt data directory
   ansible.builtin.shell: |
     set -euo pipefail
+    # dolt init requires a git identity
+    dolt config --global --get user.name  >/dev/null 2>&1 || dolt config --global --add user.name "OpenClaw"
+    dolt config --global --get user.email >/dev/null 2>&1 || dolt config --global --add user.email "openclaw@localhost"
     cd /home/ubuntu/.beads/shared-server/dolt
     if [ ! -d ".dolt" ]; then
       dolt init
