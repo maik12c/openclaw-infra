@@ -9,6 +9,16 @@
     path: /home/ubuntu/.openclaw/extensions/openclaw-mcp-adapter/index.ts
   register: plugin_dir
 
+- name: Save existing MCP adapter config before potential reinstall
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.plugins.entries["openclaw-mcp-adapter"].config // empty' \
+      /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo ""
+  args:
+    executable: /bin/bash
+  register: saved_mcp_adapter_config
+  changed_when: false
+
 - name: Install mcp-adapter plugin
   when: not plugin_dir.stat.exists or force_plugin_reinstall | bool
   block:
@@ -56,6 +66,20 @@
         openclaw plugins install --pin "{{ openclaw_mcp_adapter.npm_package }}"
       args:
         executable: /bin/bash
+
+    - name: Restore MCP adapter config after reinstall
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export XDG_RUNTIME_DIR=/run/user/1000
+        openclaw config set plugins.entries.openclaw-mcp-adapter.config \
+          --json '{{ saved_mcp_adapter_config.stdout }}'
+        # Invalidate hash so the final config write is not skipped due to stale hash
+        rm -f /home/ubuntu/.openclaw/.ansible-hashes/mcp-adapter-config
+        echo "RESTORED"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: saved_mcp_adapter_config.stdout | length > 0 and saved_mcp_adapter_config.stdout != 'null'
 
     - name: Ensure plugin is in allowlists
       ansible.builtin.shell: |
@@ -1463,7 +1487,10 @@
         D_NORM=$(echo "$DESIRED" | jq -cS '.')
         DESIRED_HASH=$(echo -n "$D_NORM" | sha256sum | cut -d' ' -f1)
         CURRENT_HASH=$(cat "$HASH_DIR/mcp-adapter-config" 2>/dev/null) || CURRENT_HASH=""
-        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ]; then
+        # Force re-write if hash matches but actual config has 0 servers (hash-desync recovery)
+        ACTUAL_SERVERS=$(jq '.plugins.entries["openclaw-mcp-adapter"].config.servers | length' \
+          /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "0")
+        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ] || [ "$ACTUAL_SERVERS" -eq 0 ]; then
             openclaw config set plugins.entries.openclaw-mcp-adapter.config --json "$DESIRED"
             echo "$DESIRED_HASH" > "$HASH_DIR/mcp-adapter-config"
             CHANGED="yes"
@@ -1493,6 +1520,21 @@
             echo "ERROR: Plugin enabled state is '$ENABLED', expected 'true'"
             exit 1
         fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Verify MCP adapter has servers configured
+      ansible.builtin.shell: |
+        set -euo pipefail
+        SERVERS_COUNT=$(jq '.plugins.entries["openclaw-mcp-adapter"].config.servers | length' \
+          /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "0")
+        EXPECTED={{ _openclaw_mcp_servers | length }}
+        if [ "$SERVERS_COUNT" -eq 0 ]; then
+            echo "FATAL: MCP adapter has 0 servers configured (expected ~$EXPECTED)"
+            exit 1
+        fi
+        echo "OK: $SERVERS_COUNT servers configured (expected ~$EXPECTED)"
       args:
         executable: /bin/bash
       changed_when: false
