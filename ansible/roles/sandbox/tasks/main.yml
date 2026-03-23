@@ -115,10 +115,12 @@
   register: gateway_restart
 
 - name: Wait for gateway to be healthy after restart
-  ansible.builtin.command: openclaw health
+  ansible.builtin.command: systemctl --user is-active openclaw-gateway
+  environment:
+    XDG_RUNTIME_DIR: /run/user/1000
   register: health_check
-  retries: 5
-  delay: 3
+  retries: 8
+  delay: 5
   until: health_check.rc == 0
   changed_when: false
   when: gateway_restart is changed

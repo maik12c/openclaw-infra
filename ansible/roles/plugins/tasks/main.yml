@@ -800,6 +800,7 @@
         executable: /bin/bash
       when: codex_image_check.rc != 0 or codex_dockerfile_changed.changed or (force_codex_rebuild | bool)
       register: codex_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Codex MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.codex_docker_image }}\""
@@ -886,42 +887,12 @@
       changed_when: false
       when: codex_container_removal is changed
 
-    - name: Restart gateway to pick up new Codex MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: codex_image_build is changed
-
-    - name: Wait for gateway to be healthy after Codex image rebuild
-      ansible.builtin.command: openclaw health
-      register: codex_health_check
-      retries: 5
-      delay: 3
-      until: codex_health_check.rc == 0
-      changed_when: false
-      when: codex_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs
-      failed_when: false
-
-    - name: Report gateway failure with diagnostic context
+    - name: Report Codex MCP build or smoke test failure
       ansible.builtin.fail:
-        msg: |
-          Gateway failed health check after Codex MCP image rebuild.
-          Recent gateway logs:
-          {{ gateway_crash_logs.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+        msg: >-
+          Codex MCP Docker image build or smoke test failed.
+          Check task output above for details.
 
 - name: Build Claude Code MCP Docker image
   when: claude_setup_token | default('') | length > 0
@@ -953,6 +924,7 @@
         executable: /bin/bash
       when: claude_code_image_check.rc != 0 or claude_code_dockerfile_changed.changed or (force_claude_code_rebuild | bool)
       register: claude_code_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Claude Code MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.claude_code_docker_image }}\""
@@ -1012,42 +984,12 @@
       changed_when: false
       when: claude_code_container_removal is changed
 
-    - name: Restart gateway to pick up new Claude Code MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: claude_code_image_build is changed
-
-    - name: Wait for gateway to be healthy after Claude Code image rebuild
-      ansible.builtin.command: openclaw health
-      register: claude_code_health_check
-      retries: 5
-      delay: 3
-      until: claude_code_health_check.rc == 0
-      changed_when: false
-      when: claude_code_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for Claude Code diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs_claude
-      failed_when: false
-
-    - name: Report gateway failure with Claude Code diagnostic context
+    - name: Report Claude Code MCP build or smoke test failure
       ansible.builtin.fail:
-        msg: |
-          Gateway failed health check after Claude Code MCP image rebuild.
-          Recent gateway logs:
-          {{ gateway_crash_logs_claude.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+        msg: >-
+          Claude Code MCP Docker image build or smoke test failed.
+          Check task output above for details.
 
 - name: Build Pi MCP Docker image
   when: claude_setup_token | default('') | length > 0
@@ -1079,6 +1021,7 @@
         executable: /bin/bash
       when: pi_mcp_image_check.rc != 0 or pi_mcp_dockerfile_changed.changed or (force_pi_mcp_rebuild | bool)
       register: pi_mcp_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Pi MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.pi_mcp_docker_image }}\""
@@ -1188,44 +1131,14 @@
       changed_when: false
       when: pi_mcp_container_removal is changed
 
-    - name: Restart gateway to pick up new Pi MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: pi_mcp_image_build is changed
-
-    - name: Wait for gateway to be healthy after Pi image rebuild
-      ansible.builtin.command: openclaw health
-      register: pi_health_check
-      retries: 5
-      delay: 3
-      until: pi_health_check.rc == 0
-      changed_when: false
-      when: pi_mcp_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for Pi MCP diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs_pi
-      failed_when: false
-
-    - name: Report Pi MCP build or smoke test failure with diagnostic context
+    - name: Report Pi MCP build or smoke test failure
       ansible.builtin.fail:
         msg: |
           Pi MCP Docker image build or smoke test failed.
           Pi auth smoke test stdout: {{ pi_auth_smoke.stdout | default('(did not run or not reached)') }}
           Pi auth smoke test stderr: {{ pi_auth_smoke.stderr | default('(did not run or not reached)') }}
-          Recent gateway logs:
-          {{ gateway_crash_logs_pi.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+          Check task output above for details.
 
 - name: Validate token variable names are defined
   ansible.builtin.assert:
@@ -1566,12 +1479,14 @@
   ansible.builtin.pause:
     seconds: 5
 
-- name: Verify mcp-adapter plugin is loaded
-  ansible.builtin.shell: |
-    export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw plugins list --json 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d' | jq -e '.plugins[] | select(.id == "openclaw-mcp-adapter")'
-  args:
-    executable: /bin/bash
+- name: Verify gateway is active after plugin config
+  ansible.builtin.command: systemctl --user is-active openclaw-gateway
+  environment:
+    XDG_RUNTIME_DIR: /run/user/1000
+  register: gateway_active_check
+  retries: 8
+  delay: 5
+  until: gateway_active_check.rc == 0
   changed_when: false
 
 - name: Check gateway logs for mcp-adapter errors
