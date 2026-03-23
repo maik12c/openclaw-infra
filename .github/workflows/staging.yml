@@ -190,7 +190,20 @@ jobs:
 
       # ── Deploy ───────────────────────────────────────────────────
       - name: Deploy staging infrastructure
-        run: cd pulumi && pulumi up --yes --stack staging
+        run: |
+          cd pulumi
+          if pulumi up --yes --stack staging 2>&1 | tee /tmp/pulumi-up.log; then
+            exit 0
+          fi
+          # Retry with fallback location on Hetzner capacity errors
+          if grep -q 'resource_unavailable' /tmp/pulumi-up.log; then
+            echo "::warning::Hetzner capacity unavailable at primary location, retrying with fsn1 (Falkenstein)"
+            pulumi cancel --yes --stack staging 2>/dev/null || true
+            pulumi config set serverLocation fsn1 --stack staging
+            pulumi up --yes --stack staging
+          else
+            exit 1
+          fi
 
       - name: Add deploy keys to GitHub repos
         run: |
