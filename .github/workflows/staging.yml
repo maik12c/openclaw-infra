@@ -201,6 +201,7 @@ jobs:
           if grep -q 'resource_unavailable' /tmp/pulumi-up.log; then
             echo "::warning::Hetzner capacity unavailable at primary location, retrying with fsn1 (Falkenstein)"
             pulumi cancel --yes --stack staging 2>/dev/null || true
+            pulumi refresh --yes --stack staging 2>/dev/null || true
             pulumi config set serverLocation fsn1 --stack staging
             pulumi up --yes --stack staging
           else
