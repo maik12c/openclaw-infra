@@ -159,7 +159,7 @@
   ansible.builtin.shell: |
     set -euo pipefail
     for i in $(seq 1 15); do
-      if dolt sql -h {{ beads_docker_bridge_gateway_ip }} -P {{ beads_shared_server_port }} -u root -q 'SELECT 1' >/dev/null 2>&1; then
+      if dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql -q 'SELECT 1' >/dev/null 2>&1; then
         echo "READY"
         exit 0
       fi
@@ -175,10 +175,11 @@
 - name: Grant remote access for container connections
   ansible.builtin.shell: |
     set -euo pipefail
-    # Connect to the running shared server (not embedded mode)
-    dolt sql -h {{ beads_docker_bridge_gateway_ip }} -P {{ beads_shared_server_port }} -u root \
+    # Global flags (--host/--port/--no-tls) must come BEFORE the sql subcommand.
+    # dolt sql -h is --help, not --host.
+    dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql \
       -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
-    dolt sql -h {{ beads_docker_bridge_gateway_ip }} -P {{ beads_shared_server_port }} -u root \
+    dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql \
       -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
   args:
     executable: /bin/bash
