@@ -299,6 +299,7 @@
         {% if openclaw_heartbeat_active_hours is defined and openclaw_heartbeat_active_hours %}
         check_set_json agents.defaults.heartbeat.activeHours '{{ openclaw_heartbeat_active_hours | to_json }}'
         {% endif %}
+        check_set agents.defaults.heartbeat.directPolicy allow
 
         # Message queue: collect messages while agent is busy, coalesce into one followup turn
         check_set messages.queue.mode collect
