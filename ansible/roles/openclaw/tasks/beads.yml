@@ -137,23 +137,24 @@
     mode: "0644"
   register: dolt_service_deployed
   when: beads_shared_server_enabled | default(false)
-  notify:
-    - reload user systemd
-    - restart dolt-beads-shared
 
-- name: Enable and start shared Dolt server
+- name: Reload systemd after service template change
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/1000"
+  when: beads_shared_server_enabled | default(false) and dolt_service_deployed is changed
+
+- name: Start or restart shared Dolt server
   ansible.builtin.systemd:
     name: dolt-beads-shared
-    state: started
+    state: "{{ 'restarted' if dolt_service_deployed is changed else 'started' }}"
     enabled: true
     scope: user
   environment:
     XDG_RUNTIME_DIR: "/run/user/1000"
-  register: dolt_service_started
   when: beads_shared_server_enabled | default(false)
-
-- name: Flush handlers to ensure server is in final state before granting access
-  ansible.builtin.meta: flush_handlers
 
 - name: Wait for shared Dolt server to accept connections
   ansible.builtin.shell: |
