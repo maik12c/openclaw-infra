@@ -113,12 +113,6 @@
     cd /home/ubuntu/.beads/shared-server/dolt
     if [ ! -d ".dolt" ]; then
       dolt init
-      # Grant remote access in embedded mode (no server needed).
-      # Default root@localhost doesn't match connections to Docker bridge IP.
-      dolt sql <<'EOSQL'
-        CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '';
-        GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';
-      EOSQL
       echo "INITIALIZED"
     else
       echo "OK"
@@ -128,6 +122,29 @@
   register: dolt_init_shared
   changed_when: "'INITIALIZED' in dolt_init_shared.stdout"
   when: beads_shared_server_enabled | default(false)
+
+- name: Grant remote access for Docker bridge connections (embedded mode)
+  ansible.builtin.copy:
+    dest: /tmp/dolt-grant-remote.sql
+    content: |
+      CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '';
+      GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';
+    mode: "0644"
+  when: beads_shared_server_enabled | default(false) and dolt_init_shared is changed
+
+- name: Apply remote access grant
+  ansible.builtin.shell: dolt sql < /tmp/dolt-grant-remote.sql
+  args:
+    chdir: /home/ubuntu/.beads/shared-server/dolt
+    executable: /bin/bash
+  when: beads_shared_server_enabled | default(false) and dolt_init_shared is changed
+
+- name: Clean up grant SQL file
+  ansible.builtin.file:
+    path: /tmp/dolt-grant-remote.sql
+    state: absent
+  changed_when: false
+  when: beads_shared_server_enabled | default(false) and dolt_init_shared is changed
 
 - name: Ensure systemd user directory exists
   ansible.builtin.file:
