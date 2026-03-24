@@ -159,20 +159,15 @@
   ansible.builtin.shell: |
     set -euo pipefail
     # Global flags (--host/--port/--no-tls) must come BEFORE the sql subcommand.
-    # dolt sql -h is --help, not --host. --user/--password required for remote auth.
-    DOLT="dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls --user root --password ''"
-    LAST_ERR=""
+    # dolt sql -h is --help, not --host.
     for i in $(seq 1 30); do
-      if $DOLT sql -q 'SELECT 1' 2>/dev/null; then
+      if dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql -q 'SELECT 1' 2>/dev/null; then
         echo "READY (attempt $i)"
         exit 0
       fi
-      LAST_ERR=$($DOLT sql -q 'SELECT 1' 2>&1 || true)
       sleep 1
     done
-    echo "TIMEOUT after 30 attempts. Last error: $LAST_ERR"
-    XDG_RUNTIME_DIR=/run/user/1000 systemctl --user status dolt-beads-shared --no-pager 2>&1 || true
-    XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u dolt-beads-shared --since "2 minutes ago" --no-pager 2>&1 | tail -20 || true
+    echo "TIMEOUT"
     exit 1
   args:
     executable: /bin/bash
@@ -182,9 +177,10 @@
 - name: Grant remote access for container connections
   ansible.builtin.shell: |
     set -euo pipefail
-    DOLT="dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls --user root --password ''"
-    $DOLT sql -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
-    $DOLT sql -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
+    dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql \
+      -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
+    dolt --host {{ beads_docker_bridge_gateway_ip }} --port {{ beads_shared_server_port }} --no-tls sql \
+      -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
   args:
     executable: /bin/bash
   changed_when: false
