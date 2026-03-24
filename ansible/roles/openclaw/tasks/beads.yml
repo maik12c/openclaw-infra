@@ -115,8 +115,8 @@
       dolt init
       # Grant remote access in embedded mode (no server needed).
       # Default root@localhost doesn't match connections to Docker bridge IP.
-      dolt sql -q 'CREATE USER IF NOT EXISTS "root"@"%" IDENTIFIED BY ""'
-      dolt sql -q 'GRANT ALL PRIVILEGES ON *.* TO "root"@"%"'
+      dolt sql -q "CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY ''"
+      dolt sql -q "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"
       echo "INITIALIZED"
     else
       echo "OK"
