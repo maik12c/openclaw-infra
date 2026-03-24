@@ -93,6 +93,9 @@ openclaw_sandbox_docker_image: "openclaw-sandbox-custom:latest"
 openclaw_sandbox_read_only_root: false  # Allow runtime pip/npm/curl installs (see docs/SECURITY.md §4)
 openclaw_browser_allow_host_control: false  # Allow sandboxed agents to use browser tool with target="host"
 
+# Health monitor: restart channels that go silent (no events) for this many minutes
+openclaw_health_monitor_stale_minutes: 15  # Default 30; lowered for faster disconnect detection
+
 # beads (bd) — AI-native issue tracker (https://github.com/steveyegge/beads)
 # v0.56.0+ removed embedded Dolt; requires `dolt` binary on PATH.
 # Shared-server mode (v0.60.0+): single host-side `dolt sql-server` via systemd,

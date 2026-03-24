@@ -359,6 +359,14 @@
         check_set_json tools.media.audio.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}"}]'
         {% endif %}
 
+        # Telegram: suppress notification sounds for error replies
+        check_set_json channels.telegram.silentErrorReplies 'true'
+
+        # Health monitor: faster detection of silent channel disconnections
+        check_set gateway.channelStaleEventThresholdMinutes "{{ openclaw_health_monitor_stale_minutes }}"
+        {# WhatsApp (Baileys) has unpredictable idle event cadence - disable to prevent restart loops #}
+        check_set_json channels.whatsapp.healthMonitor.enabled 'false'
+
         if [ -n "$CHANGED" ]; then echo "UPDATED"; else echo "OK"; fi
       args:
         executable: /bin/bash
