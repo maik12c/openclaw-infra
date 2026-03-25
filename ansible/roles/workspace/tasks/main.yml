@@ -75,6 +75,7 @@
     label: "{{ item.agent_id }}"
 
 - name: Initialize workspace git repos
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
@@ -128,6 +129,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Restore workspace content from remote on fresh server
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
@@ -163,6 +165,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Create workspace .gitignore files
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.copy:
     src: gitignore-workspace
     dest: "{{ item.item.workspace_dir }}/.gitignore"
@@ -181,6 +184,7 @@
       BEADS_DOLT_SERVER_PORT: "{{ beads_shared_server_port | default('') | string }}"
 
 - name: Migrate beads workspace from SQLite to embedded Dolt backend
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     BEADS_DIR="{{ item.item.workspace_dir }}/.beads"
@@ -251,6 +255,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Initialize beads in workspace
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
@@ -297,6 +302,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Inject Beads task system into AGENTS.md
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.blockinfile:
     path: "{{ item.item.workspace_dir }}/AGENTS.md"
     marker: "<!-- {mark} beads-task-system -->"
@@ -320,6 +326,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Add sandbox path workaround to AGENTS.md
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.blockinfile:
     path: "{{ item.item.workspace_dir }}/AGENTS.md"
     marker: "<!-- {mark} sandbox-path-workaround -->"
@@ -347,6 +354,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Add sandbox environment guide to AGENTS.md
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.blockinfile:
     path: "{{ item.item.workspace_dir }}/AGENTS.md"
     marker: "<!-- {mark} sandbox-environment -->"
@@ -391,6 +399,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Initial workspace commit and push
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
