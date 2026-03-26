@@ -69,20 +69,17 @@
 
         # Read the gateway token from config
         GW_TOKEN=$(python3 -c "import json; print(json.load(open('/home/ubuntu/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
-        GW_URL="{{ _tailscale_wss_url }}"
 
-        if [ -z "$GW_URL" ]; then
-            echo "SKIP: Tailscale WSS URL not available for device pairing" >&2
-            exit 1
-        fi
-
-        # List devices via Tailscale Serve to find pending request
-        # UUID-with-dashes regex matches request IDs (not paired device hex IDs)
-        DEVICES_OUT=$(openclaw devices list --url "$GW_URL" --token "$GW_TOKEN" 2>&1) || {
+        # Use OPENCLAW_TOKEN env var (not --url/--token WSS) because device
+        # pairing operations must work BEFORE the CLI is paired. The WSS route
+        # requires pairing (chicken-and-egg), but OPENCLAW_TOKEN injects the
+        # token at the SDK level, bypassing the WebSocket pairing handshake.
+        DEVICES_OUT=$(OPENCLAW_TOKEN="$GW_TOKEN" openclaw devices list 2>&1) || {
             echo "SKIP: devices list failed: $DEVICES_OUT" >&2
             exit 1
         }
 
+        # UUID-with-dashes regex matches request IDs (not paired device hex IDs)
         REQUEST_ID=$(echo "$DEVICES_OUT" | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1) || REQUEST_ID=""
 
         if [ -z "$REQUEST_ID" ]; then
@@ -90,8 +87,8 @@
             exit 1
         fi
 
-        # Approve the pending request via Tailscale Serve
-        openclaw devices approve "$REQUEST_ID" --url "$GW_URL" --token "$GW_TOKEN"
+        # Approve via OPENCLAW_TOKEN (same reason as above)
+        OPENCLAW_TOKEN="$GW_TOKEN" openclaw devices approve "$REQUEST_ID"
         echo "PAIRED: approved request $REQUEST_ID"
       args:
         executable: /bin/bash
