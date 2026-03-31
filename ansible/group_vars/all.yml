@@ -38,7 +38,7 @@ openclaw_custom_models:
           contextWindow: 200000
           maxTokens: 128000
 nodejs_major_version: 25
-openclaw_version: "2026.3.23"
+openclaw_version: "2026.3.24"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -49,6 +49,12 @@ openclaw_elevated_default: "off"
 openclaw_audio_provider: "groq"
 openclaw_audio_model: "whisper-large-v3-turbo"
 openclaw_groq_base_url: "https://api.groq.com/openai/v1"
+
+# Image generation (Google Gemini)
+# Set via: pulumi config set geminiApiKey --secret
+openclaw_image_generation_model: "google/gemini-3-pro-image-preview"
+openclaw_image_generation_fallbacks:
+  - "google/gemini-3.1-flash-image-preview"
 
 # Compaction safeguard: flush memories to disk before context compression
 # Prevents silent loss of in-context state when long sessions get compacted.

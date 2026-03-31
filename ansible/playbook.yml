@@ -214,7 +214,7 @@
         mode: "0600"
       vars:
         _sensitive_keys:
-          - path: ["tools", "web", "search", "grok", "apiKey"]
+          - path: ["plugins", "entries", "xai", "config", "webSearch", "apiKey"]
             value: "{{ xai_api_key | default('') }}"
             hash_name: "xai-api-key"
           - path: ["channels", "discord", "token"]

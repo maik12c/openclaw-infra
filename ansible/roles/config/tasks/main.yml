@@ -14,11 +14,9 @@
     - content: "{{ groq_api_key | default('') }}"
       dest: /tmp/ansible-groq-api-key
     - content: >-
-        {% if groq_api_key is defined and groq_api_key | length > 0 -%}
-        {{ openclaw_custom_models | combine({'providers': {'groq': {'baseUrl': openclaw_groq_base_url, 'apiKey': groq_api_key, 'models': []}}}, recursive=true) | to_json }}
-        {%- else -%}
-        {{ openclaw_custom_models | to_json }}
-        {%- endif %}
+        {%- set _groq = {'providers': {'groq': {'baseUrl': openclaw_groq_base_url, 'apiKey': groq_api_key, 'models': []}}} if (groq_api_key is defined and groq_api_key | length > 0) else {} -%}
+        {%- set _google = {'providers': {'google': {'baseUrl': 'https://generativelanguage.googleapis.com/v1beta', 'apiKey': gemini_api_key, 'models': []}}} if (gemini_api_key is defined and gemini_api_key | length > 0) else {} -%}
+        {{ openclaw_custom_models | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
       dest: /tmp/ansible-custom-models
     - content: "{{ openclaw_model_fallbacks | to_json }}"
       dest: /tmp/ansible-model-fallbacks
@@ -40,6 +38,21 @@
         CHANGED=""
         HASH_DIR="/home/ubuntu/.openclaw/.ansible-hashes"
         mkdir -p "$HASH_DIR"
+
+        # Helper: unset a config key, ignoring "not found" errors
+        check_unset() {
+            local key="$1" output
+            output=$(openclaw config unset "$key" 2>&1) && {
+                CHANGED="yes"
+            } || {
+                if echo "$output" | grep -qi "not set\|not found\|does not exist"; then
+                    true
+                else
+                    echo "ERROR: Failed to unset $key: $output"
+                    exit 1
+                fi
+            }
+        }
 
         # Helper: hash-file comparison for secrets (config get redacts secrets,
         # so we store the hash of what we SET and compare on next run)
@@ -70,7 +83,10 @@
         check_set_secret gateway.auth.token "$GATEWAY_TOKEN" gateway-auth-token
         check_set_secret gateway.remote.token "$GATEWAY_TOKEN" gateway-remote-token
 
-        # Web search (Grok / xAI) — grok.apiKey set in playbook post_tasks (openclaw#6070)
+        # Web search (Grok / xAI) — apiKey injected at plugins.entries.xai.config.webSearch.apiKey
+        # in playbook post_tasks. The legacy path tools.web.search.grok.apiKey is stripped by
+        # config validation in 2026.3.24+ (normalizeLegacyWebSearchConfigRecord), and the xai
+        # provider lacks getConfiguredCredentialValue to read the migrated value.
         {% if xai_api_key is defined and xai_api_key | length > 0 %}
         CURRENT_PROVIDER=$(openclaw config get tools.web.search.provider 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || CURRENT_PROVIDER=""
         if [ "$CURRENT_PROVIDER" != "grok" ]; then
@@ -82,20 +98,11 @@
             openclaw config set tools.web.search.timeoutSeconds 60
             CHANGED="yes"
         fi
-        # Clean up old Brave config path (idempotent for fresh installs)
+        # Clean up legacy path (idempotent for fresh installs)
         openclaw config unset tools.web.search.apiKey 2>/dev/null || true
         {% else %}
-        for key in tools.web.search.provider tools.web.search.apiKey tools.web.search.grok.apiKey tools.web.search.timeoutSeconds; do
-            output=$(openclaw config unset "$key" 2>&1) && {
-                CHANGED="yes"
-            } || {
-                if echo "$output" | grep -qi "not set\|not found\|does not exist"; then
-                    true
-                else
-                    echo "ERROR: Failed to unset $key: $output"
-                    exit 1
-                fi
-            }
+        for key in tools.web.search.provider tools.web.search.apiKey tools.web.search.grok.apiKey tools.web.search.timeoutSeconds plugins.entries.xai.config.webSearch.apiKey; do
+            check_unset "$key"
         done
         {% endif %}
 
@@ -103,16 +110,7 @@
         # after "openclaw config set models --json" which replaces the entire models object)
         {% if not (groq_api_key is defined and groq_api_key | length > 0) %}
         for key in models.providers.groq tools.media.audio.enabled tools.media.audio.models; do
-            output=$(openclaw config unset "$key" 2>&1) && {
-                CHANGED="yes"
-            } || {
-                if echo "$output" | grep -qi "not set\|not found\|does not exist"; then
-                    true
-                else
-                    echo "ERROR: Failed to unset $key: $output"
-                    exit 1
-                fi
-            }
+            check_unset "$key"
         done
         {% endif %}
 
@@ -157,6 +155,44 @@
       changed_when: "'REGENERATED' in daemon_token_sync.stdout"
       notify: restart openclaw-gateway
 
+    # Workaround for openclaw/openclaw#54555: the xai web search provider is
+    # missing getConfiguredCredentialValue, so it can't read the API key from
+    # plugins.entries.xai.config.webSearch.apiKey (where the config loader
+    # migrates it). The env var fallback bypasses this entirely.
+    # Remove when #54555 is fixed (PR #54621 pending review).
+    - name: Ensure gateway service drop-in directory exists
+      ansible.builtin.file:
+        path: /home/ubuntu/.config/systemd/user/openclaw-gateway.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Set XAI_API_KEY env var in gateway service (openclaw#54555 workaround)
+      ansible.builtin.copy:
+        dest: /home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/xai-api-key.conf
+        content: |
+          [Service]
+          Environment=XAI_API_KEY={{ xai_api_key }}
+        mode: "0600"
+      no_log: true
+      when: xai_api_key is defined and xai_api_key | length > 0
+      register: xai_dropin
+
+    - name: Remove XAI_API_KEY drop-in when key is absent
+      ansible.builtin.file:
+        path: /home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/xai-api-key.conf
+        state: absent
+      when: not (xai_api_key is defined and xai_api_key | length > 0)
+      register: xai_dropin_absent
+
+    - name: Reload systemd after drop-in change
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/1000"
+      when: (xai_dropin is defined and xai_dropin.changed) or (xai_dropin_absent is defined and xai_dropin_absent.changed)
+      notify: restart openclaw-gateway
+
     - name: Check if MCP adapter plugin is installed
       ansible.builtin.stat:
         path: /home/ubuntu/.openclaw/extensions/openclaw-mcp-adapter/index.ts
@@ -177,6 +213,21 @@
                 openclaw config set "$key" "$desired"
                 CHANGED="yes"
             fi
+        }
+
+        # Helper: unset a config key, ignoring "not found" errors
+        check_unset() {
+            local key="$1" output
+            output=$(openclaw config unset "$key" 2>&1) && {
+                CHANGED="yes"
+            } || {
+                if echo "$output" | grep -qi "not set\|not found\|does not exist"; then
+                    true
+                else
+                    echo "ERROR: Failed to unset $key: $output"
+                    exit 1
+                fi
+            }
         }
 
         # Helper: compare JSON config value (normalized), set if different
@@ -246,6 +297,12 @@
         # plugins.allow blocks ALL plugins not listed, including bundled ones.
         {# WhatsApp plugin removed in 2026.3.22 (built into core). Do not list in plugins.allow. #}
         {% set plugin_allow = ["device-pair","memory-core","phone-control","talk-voice","telegram"] %}
+        {% if xai_api_key is defined and xai_api_key | length > 0 %}
+        {%   set _ = plugin_allow.append("xai") %}
+        {% endif %}
+        {% if gemini_api_key is defined and gemini_api_key | length > 0 %}
+        {%   set _ = plugin_allow.append("google") %}
+        {% endif %}
         {% if openclaw_mcp_adapter is defined and mcp_adapter_installed.stat.exists %}
         {%   set _ = plugin_allow.append("openclaw-mcp-adapter") %}
         {% endif %}
@@ -338,6 +395,9 @@
         check_set agents.defaults.sandbox.docker.image "{{ openclaw_sandbox_docker_image }}"
         check_set_json agents.defaults.sandbox.docker.readOnlyRoot '{{ openclaw_sandbox_read_only_root | to_json }}'
         check_set_json agents.defaults.sandbox.browser.allowHostControl '{{ openclaw_browser_allow_host_control | to_json }}'
+        # Mount generated media (images) read-only so agents can verify their own output
+        check_set_json agents.defaults.sandbox.docker.binds '["/home/ubuntu/.openclaw/media:/media:ro"]'
+        check_set_json agents.defaults.sandbox.docker.dangerouslyAllowExternalBindSources 'true'
 
         {% if beads_shared_server_enabled | default(false) %}
         # Beads shared Dolt server: containers connect to host-side dolt sql-server via TCP
@@ -347,6 +407,16 @@
         check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT '"{{ beads_shared_server_port }}"'
         check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START '"0"'
         check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SHARED_SERVER '"1"'
+        {% endif %}
+
+        # Image generation model (Google Gemini — provider apiKey merged into models JSON above)
+        {% if gemini_api_key is defined and gemini_api_key | length > 0 %}
+        check_set agents.defaults.imageGenerationModel.primary "{{ openclaw_image_generation_model }}"
+        check_set_json agents.defaults.imageGenerationModel.fallbacks '{{ openclaw_image_generation_fallbacks | to_json }}'
+        {% else %}
+        for key in agents.defaults.imageGenerationModel.primary agents.defaults.imageGenerationModel.fallbacks; do
+            check_unset "$key"
+        done
         {% endif %}
 
         # Voice transcription — enable audio (provider merged into models JSON above; cleanup in secrets task)

@@ -63,6 +63,7 @@ else
     export PROVISION_TAILSCALE_HOSTNAME=$(pulumi stack output tailscaleHostname 2>/dev/null || echo "openclaw-vps")
     export PROVISION_XAI_API_KEY=$(pulumi config get xaiApiKey 2>/dev/null || echo "")
     export PROVISION_GROQ_API_KEY=$(pulumi config get groqApiKey 2>/dev/null || echo "")
+    export PROVISION_GEMINI_API_KEY=$(pulumi config get geminiApiKey 2>/dev/null || echo "")
     export PROVISION_GITHUB_TOKEN=$(pulumi config get githubToken 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL=$(pulumi config get obsidianAndyVaultRepoUrl 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_AUTH_TOKEN=$(pulumi config get obsidianAuthToken 2>/dev/null || echo "")
@@ -160,6 +161,7 @@ echo "  discord: $([ -n "$(read_env PROVISION_DISCORD_BOT_TOKEN)" ] && echo "con
 echo "  workspace_sync (main): $([ -n "$(read_env PROVISION_WORKSPACE_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  grok_search: $([ -n "$(read_env PROVISION_XAI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  groq_voice: $([ -n "$(read_env PROVISION_GROQ_API_KEY)" ] && echo "configured" || echo "skipped")"
+echo "  gemini_image: $([ -n "$(read_env PROVISION_GEMINI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  github_mcp (main): $([ -n "$(read_env PROVISION_GITHUB_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian (andy): $([ -n "$(read_env PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian_headless: $([ -n "$(read_env PROVISION_OBSIDIAN_AUTH_TOKEN)" ] && echo "configured" || echo "skipped")"
@@ -204,6 +206,7 @@ static = [
     ('workspace_repo_url', 'PROVISION_WORKSPACE_REPO_URL'),
     ('xai_api_key', 'PROVISION_XAI_API_KEY'),
     ('groq_api_key', 'PROVISION_GROQ_API_KEY'),
+    ('gemini_api_key', 'PROVISION_GEMINI_API_KEY'),
     ('github_token', 'PROVISION_GITHUB_TOKEN'),
     ('obsidian_andy_vault_repo_url', 'PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL'),
     ('obsidian_auth_token', 'PROVISION_OBSIDIAN_AUTH_TOKEN'),
