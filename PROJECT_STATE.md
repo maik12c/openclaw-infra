@@ -77,6 +77,7 @@ X11Forwarding no
 | **Obsidian Sync** | Nicht konfiguriert |
 | **Workspace Git Sync** | Nicht konfiguriert |
 | **OpenAI Whisper Voice** | Geplant (OpenAI Key vorhanden) |
+| **Codex MCP** | ✅ Aktiv — OpenAI OAuth (ChatGPT Plus), `codex-mcp:latest`, `mcp-auth-proxy` läuft |
 | **GitHub MCP** | Nicht konfiguriert |
 | **Mac Node Exec** | Nicht konfiguriert |
 
