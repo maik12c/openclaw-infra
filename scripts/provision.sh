@@ -50,10 +50,8 @@ else
         echo "ERROR: Failed to read gateway token from Pulumi. Are you logged in? (pulumi login)"
         exit 1
     }
-    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken) || {
-        echo "ERROR: Failed to read claudeSetupToken from Pulumi config."
-        exit 1
-    }
+    # Anthropic Setup-Token: optional — not used when OpenAI is primary
+    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken 2>/dev/null || echo "")
 
     # Main agent config (no suffix in key names)
     export PROVISION_TELEGRAM_BOT_TOKEN=$(pulumi config get telegramBotToken 2>/dev/null || echo "")
@@ -117,10 +115,7 @@ if [ -z "$gateway_token" ]; then
     echo "ERROR: gateway_token is empty."
     exit 1
 fi
-if [ -z "$claude_setup_token" ]; then
-    echo "ERROR: claude_setup_token is empty."
-    exit 1
-fi
+# claude_setup_token is optional — OpenAI is primary, Anthropic API key added later if needed
 
 # Validate deploy keys: if repo URL is set, deploy key must exist and be valid
 validate_deploy_key() {
@@ -155,7 +150,7 @@ fi
 
 # Status summary
 echo "  gateway_token: set"
-echo "  claude_setup_token: set"
+echo "  claude_setup_token: $([ -n "$(read_env PROVISION_CLAUDE_SETUP_TOKEN)" ] && echo "set (unused — OpenAI is primary)" || echo "not set")"
 echo "  telegram: $([ -n "$(read_env PROVISION_TELEGRAM_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  discord: $([ -n "$(read_env PROVISION_DISCORD_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  workspace_sync (main): $([ -n "$(read_env PROVISION_WORKSPACE_REPO_URL)" ] && echo "configured" || echo "skipped")"

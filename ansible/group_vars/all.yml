@@ -3,40 +3,31 @@
 # Secrets are passed via scripts/provision.sh from Pulumi config.
 
 openclaw_timezone: "Europe/Berlin"
-openclaw_model_primary: "anthropic/claude-opus-4-6"
-openclaw_model_fallbacks:
-  - "anthropic/claude-opus-4-5"
-openclaw_thinking_default: "high"
+openclaw_model_primary: "openai/gpt-5.4-mini"
+openclaw_model_fallbacks: []
+# openclaw_thinking_default not applicable for OpenAI models
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
 openclaw_custom_models:
   mode: "merge"
   providers:
-    anthropic:
-      baseUrl: "https://api.anthropic.com"
-      api: "anthropic-messages"
+    openai:
+      baseUrl: "https://api.openai.com/v1"
+      api: "openai-responses"
+      # apiKey injected at provision time from Pulumi secret openaiApiKey
       models:
-        - id: "claude-opus-4-6"
-          name: "Claude Opus 4.6"
-          reasoning: true
-          input: ["text", "image"]
-          # 200K limit: Claude Max (subscription / setup-token auth) does NOT support 1M context.
-          # Anthropic rejects the context-1m-2025-08-07 beta header for sk-ant-oat* OAuth tokens.
-          # OpenClaw auto-skips context1m when it detects subscription auth (PR #24620, Feb 2026).
-          #
-          # This value drives compaction timing: OpenClaw compacts at
-          #   contextWindow - reserveTokensFloor  (see openclaw_compaction_reserve_tokens_floor below).
-          # Setting it to 1000000 would push the compaction trigger to ~976K — the API rejects at
-          # 200K first, compaction never fires, and sessions die with duplicate Telegram deliveries.
-          #
-          # API key auth (sk-ant-api03-*): if you switch away from Claude Max, you can set:
-          #   contextWindow: 1000000
-          #   context1m: true   ← OpenClaw injects the beta header automatically
-          # Still keep reserveTokensFloor high (~50K) to compact well before 200K — extended context
-          # bills the ENTIRE input at the premium rate ($10 vs $5/MTok input, $37.50 vs $25/MTok
-          # output), not just the excess. Staying under 200K is almost always cheaper.
+        - id: "gpt-5.4-mini"
+          name: "GPT-5.4-mini"
+          reasoning: false
+          input: ["text"]
           contextWindow: 200000
-          maxTokens: 128000
+          maxTokens: 8192
+        - id: "gpt-5.4-nano"
+          name: "GPT-5.4-nano"
+          reasoning: false
+          input: ["text"]
+          contextWindow: 128000
+          maxTokens: 4096
 nodejs_major_version: 25
 openclaw_version: "2026.3.31"
 openclaw_heartbeat_interval: "30m"

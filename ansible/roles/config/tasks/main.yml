@@ -347,7 +347,7 @@
 
         # Heartbeat interval
         check_set agents.defaults.heartbeat.every "{{ openclaw_heartbeat_interval }}"
-        check_set agents.defaults.heartbeat.model "anthropic/claude-sonnet-4-20250514"
+        check_set agents.defaults.heartbeat.model "openai/gpt-5.4-mini"
         {% if openclaw_heartbeat_active_hours is defined and openclaw_heartbeat_active_hours %}
         check_set_json agents.defaults.heartbeat.activeHours '{{ openclaw_heartbeat_active_hours | to_json }}'
         {% endif %}
@@ -519,7 +519,7 @@
         - /tmp/ansible-model-fallbacks
         - /tmp/ansible-compaction-memoryflush
 
-- name: Enforce agent auth-profiles — setup token present, api-key profile absent
+- name: Remove Anthropic auth-profiles (Anthropic Setup-Token no longer used)
   ansible.builtin.shell: |
     set -euo pipefail
     python3 << 'PYEOF'
@@ -527,14 +527,12 @@
     from pathlib import Path
 
     openclaw_dir = Path(os.path.expanduser("~/.openclaw"))
-    token_file = openclaw_dir / "anthropic-auth-token"
-
-    if not token_file.exists():
-        print("SKIP: anthropic-auth-token not found")
-        raise SystemExit(0)
-
-    token = token_file.read_text().strip()
     changed_agents = []
+
+    # Remove legacy anthropic-auth-token file if it still exists
+    token_file = openclaw_dir / "anthropic-auth-token"
+    if token_file.exists():
+        token_file.unlink()
 
     for agent_dir in sorted((openclaw_dir / "agents").iterdir()):
         profiles_path = agent_dir / "agent" / "auth-profiles.json"
@@ -548,21 +546,12 @@
             data = {}
 
         profiles = data.get("profiles", {})
-        original_profiles = dict(profiles)
-
-        # Ensure setup token profile exists with current token
-        desired_default = {"type": "token", "provider": "anthropic", "token": token}
-        if profiles.get("anthropic:default") != desired_default:
-            profiles["anthropic:default"] = desired_default
-
-        # Remove legacy api-key profile
+        before = len(profiles)
+        profiles.pop("anthropic:default", None)
         profiles.pop("anthropic:api-key", None)
 
-        if profiles != original_profiles or not content:
-            data["version"] = 1
+        if len(profiles) != before:
             data["profiles"] = profiles
-            if "lastGood" not in data:
-                data["lastGood"] = {"anthropic": "anthropic:default"}
             profiles_path.write_text(json.dumps(data, indent=2) + "\n")
             profiles_path.chmod(0o600)
             changed_agents.append(agent_dir.name)
