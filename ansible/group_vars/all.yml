@@ -99,6 +99,9 @@ openclaw_sandbox_docker_image: "openclaw-sandbox-custom:latest"
 openclaw_sandbox_read_only_root: false  # Allow runtime pip/npm/curl installs (see docs/SECURITY.md §4)
 openclaw_browser_allow_host_control: false  # Allow sandboxed agents to use browser tool with target="host"
 
+# Telegram: silently suppress error reply messages (true = user sees nothing on failure)
+openclaw_telegram_silent_error_replies: true
+
 # Health monitor: restart channels that go silent (no events) for this many minutes
 openclaw_health_monitor_stale_minutes: 15  # Default 30; lowered for faster disconnect detection
 
@@ -262,9 +265,5 @@ obsidian_headless_initial_sync_timeout: 300
 # Override in openclaw.yml to add workspace-specific exclusions.
 obsidian_headless_excluded_folders: ".git,.venv,node_modules,.cache,.env"
 
-# Obsidian vault definitions (cloned into <workspace>/obsidian/<name>/).
-# Default: none. Override in openclaw.yml for vault access.
-openclaw_obsidian_vaults: []
-# Note: openclaw_obsidian_github_tokens and openclaw_workspaces are now auto-generated
-# in playbook.yml pre_tasks from openclaw_agents. See _openclaw_obsidian_github_tokens
-# and _openclaw_workspaces. Override by defining these variables in openclaw.yml.
+# Note: openclaw_workspaces is auto-generated in playbook.yml pre_tasks from
+# openclaw_agents. Override by defining openclaw_workspaces in openclaw.yml.

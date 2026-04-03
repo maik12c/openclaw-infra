@@ -425,8 +425,8 @@
         check_set_json tools.media.audio.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}"}]'
         {% endif %}
 
-        # Telegram: suppress notification sounds for error replies
-        check_set_json channels.telegram.silentErrorReplies 'true'
+        # Telegram: suppress error reply messages (silent = user sees nothing on failure)
+        check_set_json channels.telegram.silentErrorReplies '{{ openclaw_telegram_silent_error_replies | lower }}'
 
         # Health monitor: faster detection of silent channel disconnections
         check_set gateway.channelStaleEventThresholdMinutes "{{ openclaw_health_monitor_stale_minutes }}"

@@ -24,8 +24,8 @@
 
     # --- Derived config: auto-generate from openclaw_agents × openclaw_mcp_server_types ---
     # These computed variables (_openclaw_*) replace the manual per-agent lists that were
-    # previously in all.yml. Override by defining openclaw_mcp_servers, openclaw_workspaces,
-    # or openclaw_obsidian_github_tokens in openclaw.yml.
+    # previously in all.yml. Override by defining openclaw_mcp_servers or openclaw_workspaces
+    # in openclaw.yml.
 
     # MCP servers: agents × server_types cross-product
     - name: Use manually defined MCP servers (override)
@@ -140,26 +140,6 @@
         _tailscale_wss_url: "{{ _tailscale_wss_result.stdout | default('') | trim }}"
       tags: [always]
 
-    # Obsidian GitHub tokens: agent → PAT mapping for HTTPS clones
-    - name: Use manually defined Obsidian GitHub tokens (override)
-      ansible.builtin.set_fact:
-        _openclaw_obsidian_github_tokens: "{{ openclaw_obsidian_github_tokens }}"
-      when: openclaw_obsidian_github_tokens is defined
-      tags: [always]
-
-    - name: Auto-generate Obsidian GitHub tokens from agents
-      ansible.builtin.set_fact:
-        _openclaw_obsidian_github_tokens: >-
-          {{ (_openclaw_obsidian_github_tokens | default({}))
-             | combine({item.id: lookup('vars', _token_var, default='')}) }}
-      vars:
-        _token_var: "{{ 'github_token' if item.id == 'main' else 'github_token_' ~ item.id }}"
-      loop: "{{ openclaw_agents }}"
-      loop_control:
-        label: "{{ item.id }}"
-      when: openclaw_obsidian_github_tokens is not defined
-      tags: [always]
-
   roles:
     - { role: system,    tags: [system],    become: true }
     - { role: docker,    tags: [docker],    become: true }
@@ -184,15 +164,11 @@
           | selectattr('deliver_channel', 'equalto', 'whatsapp') | list | length > 0
     # discord after whatsapp — configures Discord channel (bot token, guild allowlist).
     - { role: discord, tags: [discord], when: discord_bot_token is defined and discord_bot_token | length > 0 }
-    # obsidian before qmd — vaults must be cloned before watchers start (prevents thundering herd).
-    - role: obsidian
-      tags: [obsidian]
-      when: openclaw_obsidian_vaults | default([]) | selectattr('repo_url', 'ne', '') | list | length > 0
-    # obsidian-headless after obsidian — syncs workspaces to Obsidian Sync cloud for phone access.
+    # obsidian-headless syncs workspaces to Obsidian Sync cloud for phone access.
     - role: obsidian-headless
       tags: [obsidian-headless]
       when: obsidian_headless_enabled | default(false) | bool
-    # qmd after obsidian — needs workspace dirs from agents role, before plugins registers MCP servers.
+    # qmd after obsidian-headless — needs workspace dirs from agents role, before plugins registers MCP servers.
     - { role: qmd,       tags: [qmd],       when: openclaw_mcp_adapter is defined }
     # plugins after qmd — qmd binary must exist for MCP server registration + deny rules need agents.
     - { role: plugins,   tags: [plugins],   when: openclaw_mcp_adapter is defined }

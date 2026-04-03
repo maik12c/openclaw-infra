@@ -65,7 +65,6 @@ openclaw-infra/
 │       ├── agents/    # Create non-default agents, set bindings (conditional)
 │       ├── telegram/  # Telegram channel config, cron jobs (conditional)
 │       ├── whatsapp/  # WhatsApp channel config (conditional)
-│       ├── obsidian/  # Clone/update Obsidian vaults in workspaces (conditional)
 │       ├── obsidian-headless/  # Obsidian Sync daemon per workspace (conditional)
 │       ├── qmd/       # qmd semantic search: install, per-agent watchers
 │       ├── plugins/   # MCP adapter, Codex/Claude Code/Pi/qmd servers, deny rules
@@ -105,7 +104,6 @@ Use `./scripts/provision.sh --tags <tag>` to run specific roles:
 | `telegram` | telegram | Update cron prompts or Telegram channel config |
 | `whatsapp` | whatsapp | Configure WhatsApp channel for agents using `deliver_channel: whatsapp` |
 | `discord` | discord | Configure Discord channel (bot token, guild allowlist) |
-| `obsidian` | obsidian | Clone/update Obsidian vaults in agent workspaces |
 | `obsidian-headless` | obsidian-headless | Update Obsidian Sync daemon config |
 | `qmd` | qmd | Reinstall qmd, update watchers, force reindex |
 | `plugins` | plugins | MCP adapter, Codex/Claude Code/Pi containers, GitHub MCP, deny rules |
@@ -450,8 +448,7 @@ By default, a single `main` agent is configured. To add more agents, define `ope
 | Derived variable | Generated from | Used by |
 |---|---|---|
 | `_openclaw_mcp_servers` | `openclaw_agents` x `openclaw_mcp_server_types` | plugins role (MCP server config, deny rules) |
-| `_openclaw_workspaces` | `openclaw_agents` + provision.sh secrets | workspace, qmd, obsidian, plugins roles |
-| `_openclaw_obsidian_github_tokens` | `openclaw_agents` + GitHub PATs | obsidian role |
+| `_openclaw_workspaces` | `openclaw_agents` + provision.sh secrets | workspace, qmd, obsidian-headless, plugins roles |
 
 **Naming conventions** (mechanical, from agent ID):
 
@@ -468,13 +465,13 @@ By default, a single `main` agent is configured. To add more agents, define `ope
 2. Wire per-agent secrets through `scripts/provision.sh` (Pulumi config or env vars)
 3. Run `./scripts/provision.sh`
 
-MCP servers, workspaces, deny rules, and token mappings are generated automatically. Cron jobs and Obsidian vaults remain manual (personal config — add to `openclaw.yml`).
+MCP servers, workspaces, deny rules, and token mappings are generated automatically. Cron jobs remain manual (personal config — add to `openclaw.yml`).
 
 ### Role Ordering
 
-`config` -> `agents` -> `telegram` -> `whatsapp` -> `discord` -> `obsidian` -> `obsidian-headless` -> `qmd` -> `plugins` -> `sandbox` -> `workspace`
+`config` -> `agents` -> `telegram` -> `whatsapp` -> `discord` -> `obsidian-headless` -> `qmd` -> `plugins` -> `sandbox` -> `workspace`
 
-Telegram must run immediately after agents (prevents message misrouting). Obsidian before qmd (vaults must exist before watchers start). Plugins after qmd (qmd binary needed for MCP registration).
+Telegram must run immediately after agents (prevents message misrouting). Plugins after qmd (qmd binary needed for MCP registration).
 
 ## Sandboxing
 

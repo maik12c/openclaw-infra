@@ -124,11 +124,6 @@ jobs:
             - type: "qmd"
               name_prefix: "qmd"
 
-          openclaw_obsidian_vaults:
-            - name: "staging-vault"
-              repo_url: "{{ obsidian_andy_vault_repo_url | default('') }}"
-              agents: ["main"]
-
           obsidian_headless_enabled: true
           obsidian_headless_agents:
             - "main"
