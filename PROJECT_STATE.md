@@ -1,7 +1,7 @@
 # PROJECT_STATE.md — OpenClaw Infrastructure
 
 > Persistenter Projektstatus für nahtlose Fortsetzung in neuen Sessions.
-> Zuletzt aktualisiert: 2026-04-02 (Abend)
+> Zuletzt aktualisiert: 2026-04-07
 
 ---
 
@@ -32,10 +32,11 @@
 
 | Rolle | Modell | Auth |
 |---|---|---|
-| **Primär** | `openai/gpt-5.4-mini` | OpenAI API-Key (Pay-per-Token) |
-| **Verfügbar** | `openai/gpt-5.4-nano` | OpenAI API-Key (Pay-per-Token) |
+| **Primär** | `openai/gpt-5.4-mini` | ChatGPT Plus OAuth (via mcp-auth-proxy) |
+| **Verfügbar** | `openai/gpt-5.4-nano` | ChatGPT Plus OAuth (via mcp-auth-proxy) |
 | **Fallback** | *(leer — kein Fallback konfiguriert)* | — |
 
+- **Kein API-Key mehr nötig** (07.04.2026) — OpenClaw-OpenAI-Provider zeigt auf `http://172.18.0.1:8787` (mcp-auth-proxy). Der Proxy ersetzt den Dummy-apiKey `codex-oauth-proxy` durch das echte OAuth Bearer-Token aus `~/.codex/auth.json`.
 - **Anthropic wurde komplett entfernt** (02.04.2026) — ToS-Verstoß: Anthropic verbietet Nutzung des Abo-Zugangs über Drittanbieter
 - Anthropic API-Key als Fallback wird später manuell hinzugefügt
 - Modellwechsel im Chat möglich: "Wechsle auf openai/gpt-5.4-nano"
@@ -49,7 +50,8 @@ agents.defaults.model.primary: openai/gpt-5.4-mini
 agents.defaults.model.fallbacks: []
 agents.defaults.heartbeat.model: openai/gpt-5.4-mini
 models.providers.openai.api: openai-responses
-models.providers.openai.baseUrl: https://api.openai.com/v1
+models.providers.openai.baseUrl: http://172.18.0.1:8787  (mcp-auth-proxy)
+models.providers.openai.apiKey: codex-oauth-proxy  (Proxy ersetzt durch OAuth-Token)
 
 # Sandbox
 agents.defaults.sandbox.mode: all
@@ -72,6 +74,16 @@ openclaw_agent_timeout_seconds: 1500 (25 Minuten)
 plugins.allow: ["openclaw-mcp-adapter"]
 plugins.entries.openclaw-mcp-adapter: Codex MCP Server (1 Server registriert)
 ```
+
+### mcp-auth-proxy — OpenAI API Route
+
+Eingerichtet am 07.04.2026. Der `mcp-auth-proxy` (Port 8787) hat eine neue Route `/v1/*`, die Anfragen an `api.openai.com` weiterleitet und das Codex OAuth Bearer-Token injiziert. Dadurch nutzt OpenClaw's primäres Modell (GPT-5.4-mini) das ChatGPT Plus-Abo statt eines Pay-per-Token API-Keys.
+
+**Technischer Ablauf:**
+1. OpenClaw → `POST http://172.18.0.1:8787/v1/responses` (mit Dummy-Header `Authorization: Bearer codex-oauth-proxy`)
+2. mcp-auth-proxy ersetzt den Header durch `Authorization: Bearer <OAuth-Token aus ~/.codex/auth.json>`
+3. Anfrage geht an `https://api.openai.com/v1/responses`
+4. Bei 401: Token automatisch erneuert (via `https://auth.openai.com/oauth/token`)
 
 ### Codex MCP (OpenAI OAuth)
 
@@ -177,6 +189,13 @@ openclaw-infra/
 
 ---
 
+## Änderungshistorie (07.04.2026)
+
+1. **OpenAI OAuth als primäres Modell** — mcp-auth-proxy `/v1/*`-Route hinzugefügt; GPT-5.4-mini nutzt jetzt ChatGPT Plus-Abo statt API-Key
+2. **Legacy Telegram-Config** — `openclaw doctor --fix` hat `streamMode` → `streaming` migriert
+
+---
+
 ## Änderungshistorie (02.04.2026)
 
 1. **Repo rebased** — 53 Upstream-Commits von `pandysp/openclaw-infra` gepullt (e3417b5 → 5bcf907)
@@ -205,7 +224,7 @@ openclaw-infra/
 4. **Anthropic API-Key als Fallback** — Separater API-Key (nicht das Abo), wird später hinzugefügt
    - Aktion: `openclaw config set models.providers.anthropic.apiKey "sk-ant-api03-..."` + Fallback setzen
 
-5. **OpenAI Plus Setup-Token** — Der Nutzer recherchiert, ob OpenClaw ein OpenAI OAuth als Main-Model-Provider unterstützt (analog zum Anthropic Setup-Token). Bisher nicht gefunden.
+5. **OpenAI Plus OAuth als Primärmodell** — ✅ Erledigt (07.04.2026): mcp-auth-proxy `/v1/*`-Route. Kein separater API-Key mehr nötig.
 
 ### Infrastruktur
 6. **Codex MCP testen** — Funktionstest im Browser: Agent auffordern, Code zu schreiben/auszuführen
