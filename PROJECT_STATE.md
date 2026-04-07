@@ -196,9 +196,11 @@ openclaw-infra/
 
 ## Änderungshistorie (07.04.2026)
 
-1. **openai-codex Provider aktiviert** — `openai-codex/gpt-5.4` ist jetzt Primärmodell via ChatGPT Plus OAuth. Credentials in `~/.openclaw/credentials/oauth.json`.
-2. **mcp-auth-proxy `/v1/*` Route** — hinzugefügt (nicht aktiv genutzt, kein api.responses.write Scope)
-3. **Legacy Telegram-Config** — `openclaw doctor --fix` hat `streamMode` → `streaming` migriert
+1. **openai-codex Provider aktiviert** — `openai-codex/gpt-5.4` ist jetzt Primärmodell via ChatGPT Plus OAuth. Credentials in `~/.openclaw/credentials/oauth.json` + `auth-profiles.json`.
+2. **models.json Fix** — `openai-codex.models` war leer → `session_status` Tool zeigte fälschlich `openai/gpt-5.4-mini`. Behoben durch Hinzufügen von `gpt-5.4` Definition.
+3. **Ansible Tasks** — Config-Rolle synct jetzt automatisch OAuth-Credentials + models.json bei Re-Provision.
+4. **mcp-auth-proxy `/v1/*` Route** — hinzugefügt (nicht aktiv genutzt, kein api.responses.write Scope)
+5. **Legacy Telegram-Config** — `openclaw doctor --fix` hat `streamMode` → `streaming` migriert
 
 ---
 

@@ -566,3 +566,166 @@
   register: auth_profiles_result
   changed_when: "'CHANGED:' in auth_profiles_result.stdout"
   notify: restart openclaw-gateway
+
+- name: Ensure openai-codex/gpt-5.4 is in per-agent models.json (fixes session_status reporting)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 << 'PYEOF'
+    import json, os
+    from pathlib import Path
+
+    openclaw_dir = Path(os.path.expanduser("~/.openclaw"))
+    changed_agents = []
+
+    GPT54_MODEL = {
+        "id": "gpt-5.4",
+        "name": "GPT-5.4 (Codex)",
+        "api": "openai-codex-responses",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "contextWindow": 266000,
+        "maxTokens": 32768,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    }
+
+    for agent_dir in sorted((openclaw_dir / "agents").iterdir()):
+        models_path = agent_dir / "agent" / "models.json"
+        if not models_path.exists():
+            continue
+
+        try:
+            data = json.loads(models_path.read_text())
+        except json.JSONDecodeError:
+            continue
+
+        providers = data.get("providers", {})
+        codex = providers.get("openai-codex", {})
+        models = codex.get("models", [])
+
+        # Check if gpt-5.4 already present
+        if any(m.get("id") == "gpt-5.4" for m in models):
+            continue
+
+        # Add gpt-5.4
+        models.append(GPT54_MODEL)
+        codex["models"] = models
+        providers["openai-codex"] = codex
+        data["providers"] = providers
+
+        models_path.write_text(json.dumps(data, indent=2) + "\n")
+        changed_agents.append(agent_dir.name)
+
+    if changed_agents:
+        print("CHANGED: " + ", ".join(changed_agents))
+    else:
+        print("OK")
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: models_json_result
+  changed_when: "'CHANGED:' in models_json_result.stdout"
+  notify: restart openclaw-gateway
+
+- name: Sync openai-codex OAuth credentials from ~/.codex/auth.json
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 << 'PYEOF'
+    import json, base64, os, time
+    from pathlib import Path
+
+    codex_auth = Path(os.path.expanduser("~/.codex/auth.json"))
+    if not codex_auth.exists():
+        print("SKIP: ~/.codex/auth.json not found")
+        exit(0)
+
+    try:
+        d = json.loads(codex_auth.read_text())
+    except Exception as e:
+        print(f"SKIP: cannot parse auth.json: {e}")
+        exit(0)
+
+    tokens = d.get("tokens", {})
+    access = tokens.get("access_token", "")
+    refresh = tokens.get("refresh_token", "")
+    if not access or not refresh:
+        print("SKIP: no access/refresh token found")
+        exit(0)
+
+    # Decode JWT to extract accountId and expiry
+    try:
+        parts = access.split(".")
+        pad = len(parts[1]) % 4
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * pad))
+        auth_claim = payload.get("https://api.openai.com/auth", {})
+        account_id = auth_claim.get("chatgpt_account_id", "")
+        expires_ms = payload.get("exp", 0) * 1000
+    except Exception as e:
+        print(f"SKIP: cannot decode JWT: {e}")
+        exit(0)
+
+    if expires_ms < time.time() * 1000:
+        print("SKIP: access token already expired — run `codex login` locally and re-provision")
+        exit(0)
+
+    openclaw_dir = Path(os.path.expanduser("~/.openclaw"))
+    changed = []
+
+    # 1. Write ~/.openclaw/credentials/oauth.json
+    creds_dir = openclaw_dir / "credentials"
+    creds_dir.mkdir(mode=0o700, exist_ok=True)
+    oauth_path = creds_dir / "oauth.json"
+    oauth_data = {
+        "openai-codex": {
+            "access": access,
+            "refresh": refresh,
+            "expires": expires_ms,
+            "accountId": account_id
+        }
+    }
+    existing = {}
+    if oauth_path.exists():
+        try:
+            existing = json.loads(oauth_path.read_text())
+        except Exception:
+            pass
+    existing_entry = existing.get("openai-codex", {})
+    if existing_entry.get("access") != access:
+        oauth_path.write_text(json.dumps(oauth_data, indent=2) + "\n")
+        oauth_path.chmod(0o600)
+        changed.append("credentials/oauth.json")
+
+    # 2. Write openai-codex:default into each agent's auth-profiles.json
+    for agent_dir in sorted((openclaw_dir / "agents").iterdir()):
+        profiles_path = agent_dir / "agent" / "auth-profiles.json"
+        if not profiles_path.exists():
+            continue
+        try:
+            store = json.loads(profiles_path.read_text())
+        except Exception:
+            continue
+        existing_profile = store.get("profiles", {}).get("openai-codex:default", {})
+        if existing_profile.get("access") == access:
+            continue
+        store.setdefault("profiles", {})["openai-codex:default"] = {
+            "type": "oauth",
+            "provider": "openai-codex",
+            "access": access,
+            "refresh": refresh,
+            "expires": expires_ms,
+            "accountId": account_id
+        }
+        profiles_path.write_text(json.dumps(store, indent=2) + "\n")
+        profiles_path.chmod(0o600)
+        changed.append(f"agents/{agent_dir.name}/auth-profiles.json")
+
+    if changed:
+        print("CHANGED: " + ", ".join(changed))
+    else:
+        print("OK")
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: oauth_sync_result
+  changed_when: "'CHANGED:' in oauth_sync_result.stdout"
+  no_log: true
+  notify: restart openclaw-gateway
