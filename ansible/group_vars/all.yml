@@ -12,9 +12,9 @@ openclaw_custom_models:
   mode: "merge"
   providers:
     openai:
-      baseUrl: "https://api.openai.com/v1"
+      baseUrl: "http://172.18.0.1:8787"
       api: "openai-responses"
-      # apiKey injected at provision time from Pulumi secret openaiApiKey
+      # apiKey: "codex-oauth-proxy" — injected at provision time; proxy replaces it with OAuth Bearer token
       models:
         - id: "gpt-5.4-mini"
           name: "GPT-5.4-mini"
