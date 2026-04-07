@@ -32,11 +32,12 @@
 
 | Rolle | Modell | Auth |
 |---|---|---|
-| **Primär** | `openai/gpt-5.4-mini` | ChatGPT Plus OAuth (via mcp-auth-proxy) |
-| **Verfügbar** | `openai/gpt-5.4-nano` | ChatGPT Plus OAuth (via mcp-auth-proxy) |
+| **Primär** | `openai-codex/gpt-5.4` | ChatGPT Plus OAuth (openai-codex Provider) |
+| **Verfügbar** | `openai/gpt-5.4-mini` | OpenAI API-Key (optional) |
+| **Verfügbar** | `openai/gpt-5.4-nano` | OpenAI API-Key (optional) |
 | **Fallback** | *(leer — kein Fallback konfiguriert)* | — |
 
-- **Kein API-Key mehr nötig** (07.04.2026) — OpenClaw-OpenAI-Provider zeigt auf `http://172.18.0.1:8787` (mcp-auth-proxy). Der Proxy ersetzt den Dummy-apiKey `codex-oauth-proxy` durch das echte OAuth Bearer-Token aus `~/.codex/auth.json`.
+- **ChatGPT Plus OAuth als Primärmodell** (07.04.2026) — OpenClaw nutzt den eingebauten `openai-codex` Provider mit dem OAuth-Token aus `~/.openclaw/credentials/oauth.json`. Kein API-Key nötig.
 - **Anthropic wurde komplett entfernt** (02.04.2026) — ToS-Verstoß: Anthropic verbietet Nutzung des Abo-Zugangs über Drittanbieter
 - Anthropic API-Key als Fallback wird später manuell hinzugefügt
 - Modellwechsel im Chat möglich: "Wechsle auf openai/gpt-5.4-nano"
@@ -49,9 +50,10 @@
 agents.defaults.model.primary: openai/gpt-5.4-mini
 agents.defaults.model.fallbacks: []
 agents.defaults.heartbeat.model: openai/gpt-5.4-mini
+agents.defaults.model.primary: openai-codex/gpt-5.4
+agents.defaults.heartbeat.model: openai-codex/gpt-5.4
 models.providers.openai.api: openai-responses
-models.providers.openai.baseUrl: http://172.18.0.1:8787  (mcp-auth-proxy)
-models.providers.openai.apiKey: codex-oauth-proxy  (Proxy ersetzt durch OAuth-Token)
+models.providers.openai.baseUrl: https://api.openai.com/v1  (für optionale Fallback-Modelle)
 
 # Sandbox
 agents.defaults.sandbox.mode: all
@@ -75,15 +77,18 @@ plugins.allow: ["openclaw-mcp-adapter"]
 plugins.entries.openclaw-mcp-adapter: Codex MCP Server (1 Server registriert)
 ```
 
-### mcp-auth-proxy — OpenAI API Route
+### openai-codex Provider (ChatGPT Plus OAuth)
 
-Eingerichtet am 07.04.2026. Der `mcp-auth-proxy` (Port 8787) hat eine neue Route `/v1/*`, die Anfragen an `api.openai.com` weiterleitet und das Codex OAuth Bearer-Token injiziert. Dadurch nutzt OpenClaw's primäres Modell (GPT-5.4-mini) das ChatGPT Plus-Abo statt eines Pay-per-Token API-Keys.
+Eingerichtet am 07.04.2026. OpenClaw nutzt den eingebauten `openai-codex` Provider, der ChatGPT Plus/Pro OAuth unterstützt und `wss://chatgpt.com/backend-api/codex/responses` (WebSocket) aufruft.
 
-**Technischer Ablauf:**
-1. OpenClaw → `POST http://172.18.0.1:8787/v1/responses` (mit Dummy-Header `Authorization: Bearer codex-oauth-proxy`)
-2. mcp-auth-proxy ersetzt den Header durch `Authorization: Bearer <OAuth-Token aus ~/.codex/auth.json>`
-3. Anfrage geht an `https://api.openai.com/v1/responses`
-4. Bei 401: Token automatisch erneuert (via `https://auth.openai.com/oauth/token`)
+**Credentials-Datei:** `~/.openclaw/credentials/oauth.json`
+```json
+{ "openai-codex": { "access": "...", "refresh": "...", "expires": 1234567890000, "accountId": "..." } }
+```
+
+**Token-Erneuerung:** OpenClaw erneuert den Token automatisch via `https://auth.openai.com/oauth/token`. Nach 10 Tagen läuft der Refresh-Token ab → dann neu `codex login` lokal, dann `provision.sh --tags config`.
+
+**Hinweis:** Die mcp-auth-proxy `/v1/*` Route wurde ebenfalls hinzugefügt (Commit `8252b27`), wird aber aktuell nicht genutzt (kein Scope für `api.responses.write`).
 
 ### Codex MCP (OpenAI OAuth)
 
@@ -191,8 +196,9 @@ openclaw-infra/
 
 ## Änderungshistorie (07.04.2026)
 
-1. **OpenAI OAuth als primäres Modell** — mcp-auth-proxy `/v1/*`-Route hinzugefügt; GPT-5.4-mini nutzt jetzt ChatGPT Plus-Abo statt API-Key
-2. **Legacy Telegram-Config** — `openclaw doctor --fix` hat `streamMode` → `streaming` migriert
+1. **openai-codex Provider aktiviert** — `openai-codex/gpt-5.4` ist jetzt Primärmodell via ChatGPT Plus OAuth. Credentials in `~/.openclaw/credentials/oauth.json`.
+2. **mcp-auth-proxy `/v1/*` Route** — hinzugefügt (nicht aktiv genutzt, kein api.responses.write Scope)
+3. **Legacy Telegram-Config** — `openclaw doctor --fix` hat `streamMode` → `streaming` migriert
 
 ---
 
