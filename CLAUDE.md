@@ -30,6 +30,59 @@ For the full threat model, see [docs/SECURITY.md](./docs/SECURITY.md).
 
 Gateway runs via systemd (not Docker) as unprivileged user. Docker is used only for sandbox sessions (`openclaw-sandbox-custom:latest`). Auth: Tailscale identity + device pairing; no token needed. Fallback tokenized URL: `pulumi stack output tailscaleUrlWithToken --show-secrets`.
 
+## Active Model Configuration
+
+**Primary model:** `openai-codex/gpt-5.4` via **ChatGPT Plus OAuth** — no per-token billing, no API key required.
+
+| Provider | Model | Auth | Endpoint |
+|----------|-------|------|----------|
+| `openai-codex` | `gpt-5.4` | OAuth (ChatGPT Plus) | `wss://chatgpt.com/backend-api/codex/responses` |
+| `openai` | `gpt-5.4-mini`, `gpt-5.4-nano` | API key (optional fallback) | `https://api.openai.com/v1` |
+
+**Anthropic has been removed** — Anthropic ToS prohibits subscription access via third-party gateways.
+
+### How OAuth Auth Works
+
+OpenClaw's built-in `openai-codex` provider uses a ChatGPT OAuth token stored in two places:
+
+```
+~/.openclaw/credentials/oauth.json       # merged into auth-profiles on load
+~/.openclaw/agents/main/agent/auth-profiles.json  # direct profile: openai-codex:default
+```
+
+The token is sourced from `~/.codex/auth.json` (written by `codex login`). The Ansible `config` role syncs it automatically during provisioning.
+
+### Token Lifecycle
+
+- **Access token:** valid ~10 days; OpenClaw auto-refreshes via `https://auth.openai.com/oauth/token`
+- **Refresh token:** valid until explicitly revoked (no hard expiry)
+- **If token expires or refresh fails:**
+
+```bash
+codex login                             # run locally on Windows — opens browser OAuth flow
+./scripts/provision.sh --tags config   # syncs new tokens to VPS + restarts gateway
+```
+
+### mcp-auth-proxy
+
+A Node.js reverse proxy runs as a systemd user service on the VPS (port `172.18.0.1:8787`, only reachable from the host and `codex-proxy-net` Docker containers). It handles:
+
+| Route | Target | Purpose |
+|-------|--------|---------|
+| `/health` | local | Health check |
+| `/github-<agent>/*` | `github.com` | Per-agent GitHub PAT injection for MCP git ops |
+| `/anthropic/*` | `api.anthropic.com` | Claude Code / Pi MCP containers (token injection) |
+| `/v1/*` | `api.openai.com` | OpenAI API proxy with OAuth token (added, not currently used) |
+| default | `chatgpt.com/backend-api/codex` | Codex MCP server requests |
+
+```bash
+# Check proxy health
+ssh ubuntu@openclaw-vps 'curl -s http://172.18.0.1:8787/health | python3 -m json.tool'
+
+# Check proxy logs
+ssh ubuntu@openclaw-vps 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u mcp-auth-proxy -f'
+```
+
 ## Directory Structure
 
 ```
@@ -61,7 +114,7 @@ openclaw-infra/
 │       ├── docker/    # Docker install, ubuntu→docker group
 │       ├── ufw/       # Firewall rules
 │       ├── openclaw/  # Binary install, onboard, daemon
-│       ├── config/    # All `openclaw config set` commands
+│       ├── config/    # All `openclaw config set` commands + OAuth credential sync
 │       ├── agents/    # Create non-default agents, set bindings (conditional)
 │       ├── telegram/  # Telegram channel config, cron jobs (conditional)
 │       ├── whatsapp/  # WhatsApp channel config (conditional)
@@ -100,7 +153,7 @@ Use `./scripts/provision.sh --tags <tag>` to run specific roles:
 | `docker` | docker | Docker upgrade or group changes |
 | `ufw` | ufw | Firewall rule changes |
 | `openclaw` | openclaw | Reinstall/update OpenClaw binary |
-| `config` | config | Change model, sandbox mode, tool allowlist, elevated tools, auth settings, node exec |
+| `config` | config | Change model, sandbox mode, tool allowlist, elevated tools, auth settings, node exec; **also syncs OAuth tokens** |
 | `agents` | agents | Add/remove non-default agents, update Telegram bindings |
 | `telegram` | telegram | Update cron prompts or Telegram channel config |
 | `whatsapp` | whatsapp | Configure WhatsApp channel for agents using `deliver_channel: whatsapp` |
@@ -161,7 +214,7 @@ pulumi up    # Creates server + auto-triggers Ansible provisioning
 # Full provision
 ./scripts/provision.sh
 
-# Config only (model, sandbox, auth settings)
+# Config only (model, sandbox, auth settings + OAuth token sync)
 ./scripts/provision.sh --tags config
 
 # Rebuild sandbox image
@@ -172,6 +225,18 @@ pulumi up    # Creates server + auto-triggers Ansible provisioning
 
 # Dry run — see what would change
 ./scripts/provision.sh --check --diff
+```
+
+### Refresh OAuth Token (when token expires)
+
+The `openai-codex` OAuth token is valid ~10 days (auto-refreshed by OpenClaw). If the refresh token is ever invalidated:
+
+```bash
+# 1. On Windows — re-authenticate with ChatGPT
+codex login
+
+# 2. Deploy new token to VPS
+./scripts/provision.sh --tags config
 ```
 
 ### Check Server Status
@@ -238,7 +303,8 @@ Default server type is **CX43** (8 vCPU, 16 GB RAM, ~€9.49/mo). Change with `p
 | Hetzner VPS (CX43) | ~€9.49/mo |
 | Hetzner Backups | ~€1.90/mo |
 | Tailscale | Free (personal) |
-| **Total** | **~€11.39/mo** |
+| ChatGPT Plus | ~$20/mo (covers all OpenClaw model usage) |
+| **Total** | **~€11.39/mo + $20/mo** |
 
 ## Secrets Reference
 
@@ -247,8 +313,8 @@ Default server type is **CX43** (8 vCPU, 16 GB RAM, ~€9.49/mo). Change with `p
 | Pulumi access token | Authenticates with Pulumi Cloud | app.pulumi.com → Settings → Access Tokens |
 | Hetzner API token | Creates/manages VPS | console.hetzner.cloud → Project → API Tokens |
 | Tailscale auth key | Joins server to your network | login.tailscale.com/admin/settings/keys |
-| Claude setup token | Powers OpenClaw (flat fee) | `claude setup-token` in terminal |
 | Gateway token | Authenticates browser and CLI sessions (cached after first use) | Auto-generated by Pulumi, view with `pulumi stack output openclawGatewayToken --show-secrets` |
+| **Codex auth** (`~/.codex/auth.json`) | **Primary model auth — ChatGPT Plus OAuth for `openai-codex/gpt-5.4`** | `codex login` locally, then `provision.sh --tags config` |
 | Telegram bot token | (Optional) Sends messages via Telegram | @BotFather on Telegram |
 | Telegram user/group ID | (Optional) Your Telegram recipient ID | `./scripts/get-telegram-id.sh` or @userinfobot |
 | WhatsApp phone number | (Optional) Agent's WhatsApp number (E.164) | `pulumi config set whatsappNiciPhone "+491234567890"` |
@@ -258,7 +324,7 @@ Default server type is **CX43** (8 vCPU, 16 GB RAM, ~€9.49/mo). Change with `p
 | xAI API key | (Optional) Enables web search via Grok | x.ai/api → API Keys |
 | Groq API key | (Optional) Enables voice transcription via Whisper | console.groq.com → API Keys |
 | Gemini API key | (Optional) Enables image generation via Google Gemini | aistudio.google.com → API Keys |
-| Codex auth (`~/.codex/auth.json`) | (Optional) Powers Codex MCP servers for coding assistance | Run `codex login` locally, auto-deployed by provision.sh |
+| OpenAI API key | (Optional) Fallback models `openai/gpt-5.4-mini`, `gpt-5.4-nano` | platform.openai.com/api-keys |
 | Obsidian auth token | (Optional) Authenticates with Obsidian Sync API | `ob login` locally, copy from `~/.obsidian-headless/auth_token` |
 | Obsidian vault password | (Optional) E2EE encryption for Obsidian Sync vaults | User-chosen password |
 
@@ -284,10 +350,11 @@ Default server type is **CX43** (8 vCPU, 16 GB RAM, ~€9.49/mo). Change with `p
 - Never bind OpenClaw to 0.0.0.0
 - Never commit `.env` files or API keys
 - Never use password SSH authentication
+- **Never use Anthropic Setup-Token in OpenClaw** — Anthropic ToS prohibits subscription access via third-party gateways
 
 ### Key Rotation
 
-Update secret via `pulumi config set <key> --secret`, then `pulumi up`. Tailscale key: `tailscaleAuthKey`. Claude token: `claudeSetupToken` + `openclaw auth login` on server. Gateway token: redeploy + re-pair devices. Telegram bot: revoke via @BotFather, update `telegramBotToken`, redeploy.
+Update secret via `pulumi config set <key> --secret`, then `pulumi up`. Tailscale key: `tailscaleAuthKey`. OpenAI OAuth: `codex login` locally + `provision.sh --tags config`. Gateway token: redeploy + re-pair devices. Telegram bot: revoke via @BotFather, update `telegramBotToken`, redeploy.
 
 ## First-Time Setup
 
@@ -299,7 +366,10 @@ pulumi stack init prod
 # Required secrets
 pulumi config set hcloud:token --secret
 pulumi config set tailscaleAuthKey --secret
-pulumi config set claudeSetupToken --secret
+
+# OAuth model auth (required — run locally first)
+codex login   # authenticates with ChatGPT Plus, writes ~/.codex/auth.json
+# provision.sh will sync this automatically
 
 # Optional features
 pulumi config set xaiApiKey --secret               # web search via Grok
@@ -572,4 +642,27 @@ ssh ubuntu@openclaw-vps.<tailnet>.ts.net 'XDG_RUNTIME_DIR=/run/user/1000 journal
 
 # Verify deployment
 ./scripts/verify.sh
+```
+
+### OAuth Token Issues
+
+```bash
+# Check current auth profile on VPS
+ssh ubuntu@openclaw-vps 'python3 -c "
+import json; s = json.load(open(\"/home/ubuntu/.openclaw/agents/main/agent/auth-profiles.json\"))
+p = s[\"profiles\"].get(\"openai-codex:default\", {})
+import time; exp = p.get(\"expires\", 0) / 1000
+print(\"Has token:\", bool(p.get(\"access\")))
+print(\"Expires in:\", int(exp - time.time()), \"seconds\")
+"'
+
+# Check proxy health (includes openai_api status)
+ssh ubuntu@openclaw-vps 'curl -s http://172.18.0.1:8787/health | python3 -m json.tool'
+
+# Verify active model
+ssh ubuntu@openclaw-vps 'PATH=/home/ubuntu/.npm-global/bin:$PATH XDG_RUNTIME_DIR=/run/user/1000 openclaw models list'
+
+# Force token refresh if needed
+codex login   # locally on Windows
+./scripts/provision.sh --tags config
 ```
