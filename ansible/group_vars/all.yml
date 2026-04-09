@@ -16,7 +16,11 @@ openclaw_custom_models:
   providers:
     openai:
       baseUrl: "https://api.openai.com/v1"
-      api: "openai-responses"
+      # Must be openai-completions (NOT openai-responses):
+      # openai-responses breaks audio transcription — it omits the model parameter
+      # in /v1/audio/transcriptions requests, causing HTTP 400 from OpenAI.
+      # openai-completions works for both gpt-5.4-mini chat fallback AND whisper-1 audio.
+      api: "openai-completions"
       # apiKey: injected at provision time from Pulumi secret openaiApiKey (optional fallback)
       models:
         - id: "gpt-5.4-mini"
@@ -31,6 +35,9 @@ openclaw_custom_models:
           input: ["text"]
           contextWindow: 128000
           maxTokens: 4096
+        - id: "whisper-1"
+          name: "Whisper-1"
+          input: ["text"]
 nodejs_major_version: 25
 openclaw_version: "2026.3.31"
 openclaw_heartbeat_interval: "30m"
@@ -39,11 +46,9 @@ openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h
 openclaw_elevated_default: "off"
 
 # Voice transcription (OpenAI Whisper)
-# Uses a dedicated "openai-transcribe" provider with api: "openai-completions".
-# Root cause: the main "openai" provider has api: "openai-responses" which calls
-# /v1/audio/transcriptions WITHOUT the model parameter → HTTP 400 from OpenAI.
-# "openai-completions" correctly passes the model parameter in the audio request.
-openclaw_audio_provider: "openai-transcribe"
+# Uses the openai provider (api: "openai-completions").
+# NOTE: api: "openai-responses" breaks audio — omits model param → HTTP 400.
+openclaw_audio_provider: "openai"
 openclaw_audio_model: "whisper-1"
 
 # Image generation (Google Gemini)

@@ -15,10 +15,9 @@
       dest: /tmp/ansible-groq-api-key
     - content: >-
         {%- set _openai_key = {'providers': {'openai': {'apiKey': openai_api_key}}} if (openai_api_key is defined and openai_api_key | length > 0) else {} -%}
-        {%- set _openai_transcribe = {'providers': {'openai-transcribe': {'baseUrl': 'https://api.openai.com/v1', 'api': 'openai-completions', 'apiKey': openai_api_key, 'models': [{'id': 'whisper-1', 'name': 'Whisper-1', 'input': ['text']}, {'id': 'gpt-4o-mini-transcribe', 'name': 'GPT-4o Mini Transcribe', 'input': ['text']}]}}} if (openai_api_key is defined and openai_api_key | length > 0) else {} -%}
         {%- set _groq = {'providers': {'groq': {'baseUrl': openclaw_groq_base_url, 'apiKey': groq_api_key, 'models': []}}} if (groq_api_key is defined and groq_api_key | length > 0) else {} -%}
         {%- set _google = {'providers': {'google': {'baseUrl': 'https://generativelanguage.googleapis.com/v1beta', 'apiKey': gemini_api_key, 'models': []}}} if (gemini_api_key is defined and gemini_api_key | length > 0) else {} -%}
-        {{ openclaw_custom_models | combine(_openai_key, recursive=true) | combine(_openai_transcribe, recursive=true) | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
+        {{ openclaw_custom_models | combine(_openai_key, recursive=true) | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
       dest: /tmp/ansible-custom-models
     - content: "{{ openclaw_model_fallbacks | to_json }}"
       dest: /tmp/ansible-model-fallbacks
@@ -118,8 +117,9 @@
         {% if not (groq_api_key is defined and groq_api_key | length > 0) %}
         openclaw config unset models.providers.groq 2>/dev/null || true
         {% endif %}
-        # Remove old openai-audio provider (replaced by openai-transcribe with correct api type)
+        # Remove stale audio-specific providers from prior failed attempts
         openclaw config unset models.providers.openai-audio 2>/dev/null || true
+        openclaw config unset models.providers.openai-transcribe 2>/dev/null || true
 
         if [ -n "$CHANGED" ]; then echo "UPDATED"; else echo "OK"; fi
       args:
