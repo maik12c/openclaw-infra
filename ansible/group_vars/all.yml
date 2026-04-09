@@ -3,42 +3,34 @@
 # Secrets are passed via scripts/provision.sh from Pulumi config.
 
 openclaw_timezone: "Europe/Berlin"
-openclaw_model_primary: "anthropic/claude-opus-4-6"
-openclaw_model_fallbacks:
-  - "anthropic/claude-opus-4-5"
-openclaw_thinking_default: "high"
+openclaw_model_primary: "openai-codex/gpt-5.4"
+openclaw_model_fallbacks: []
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
+# openai-codex/gpt-5.4 is built-in — no custom model definition needed.
+# The openai provider is kept for fallback / gpt-5.4-nano access.
 openclaw_custom_models:
   mode: "merge"
   providers:
-    anthropic:
-      baseUrl: "https://api.anthropic.com"
-      api: "anthropic-messages"
+    openai:
+      baseUrl: "https://api.openai.com/v1"
+      api: "openai-responses"
+      # apiKey: injected at provision time from Pulumi secret openaiApiKey (optional fallback)
       models:
-        - id: "claude-opus-4-6"
-          name: "Claude Opus 4.6"
-          reasoning: true
-          input: ["text", "image"]
-          # 200K limit: Claude Max (subscription / setup-token auth) does NOT support 1M context.
-          # Anthropic rejects the context-1m-2025-08-07 beta header for sk-ant-oat* OAuth tokens.
-          # OpenClaw auto-skips context1m when it detects subscription auth (PR #24620, Feb 2026).
-          #
-          # This value drives compaction timing: OpenClaw compacts at
-          #   contextWindow - reserveTokensFloor  (see openclaw_compaction_reserve_tokens_floor below).
-          # Setting it to 1000000 would push the compaction trigger to ~976K — the API rejects at
-          # 200K first, compaction never fires, and sessions die with duplicate Telegram deliveries.
-          #
-          # API key auth (sk-ant-api03-*): if you switch away from Claude Max, you can set:
-          #   contextWindow: 1000000
-          #   context1m: true   ← OpenClaw injects the beta header automatically
-          # Still keep reserveTokensFloor high (~50K) to compact well before 200K — extended context
-          # bills the ENTIRE input at the premium rate ($10 vs $5/MTok input, $37.50 vs $25/MTok
-          # output), not just the excess. Staying under 200K is almost always cheaper.
+        - id: "gpt-5.4-mini"
+          name: "GPT-5.4-mini"
+          reasoning: false
+          input: ["text"]
           contextWindow: 200000
-          maxTokens: 128000
+          maxTokens: 8192
+        - id: "gpt-5.4-nano"
+          name: "GPT-5.4-nano"
+          reasoning: false
+          input: ["text"]
+          contextWindow: 128000
+          maxTokens: 4096
 nodejs_major_version: 25
-openclaw_version: "2026.3.13"
+openclaw_version: "2026.3.31"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -49,6 +41,12 @@ openclaw_elevated_default: "off"
 openclaw_audio_provider: "groq"
 openclaw_audio_model: "whisper-large-v3-turbo"
 openclaw_groq_base_url: "https://api.groq.com/openai/v1"
+
+# Image generation (Google Gemini)
+# Set via: pulumi config set geminiApiKey --secret
+openclaw_image_generation_model: "google/gemini-3-pro-image-preview"
+openclaw_image_generation_fallbacks:
+  - "google/gemini-3.1-flash-image-preview"
 
 # Compaction safeguard: flush memories to disk before context compression
 # Prevents silent loss of in-context state when long sessions get compacted.
@@ -93,10 +91,18 @@ openclaw_sandbox_docker_image: "openclaw-sandbox-custom:latest"
 openclaw_sandbox_read_only_root: false  # Allow runtime pip/npm/curl installs (see docs/SECURITY.md §4)
 openclaw_browser_allow_host_control: false  # Allow sandboxed agents to use browser tool with target="host"
 
+# Health monitor: restart channels that go silent (no events) for this many minutes
+openclaw_health_monitor_stale_minutes: 15  # Default 30; lowered for faster disconnect detection
+
 # beads (bd) — AI-native issue tracker (https://github.com/steveyegge/beads)
 # v0.56.0+ removed embedded Dolt; requires `dolt` binary on PATH.
-# bd auto-starts a per-project Dolt server (PID in .beads/dolt-server.pid).
-beads_version: "0.61.0"
+# Shared-server mode (v0.60.0+): single host-side `dolt sql-server` via systemd,
+# containers connect via TCP through Docker bridge gateway. No per-workspace servers.
+beads_version: "0.62.0"
+dolt_version: "1.83.6"
+beads_shared_server_enabled: true
+beads_shared_server_port: 3308
+beads_shared_server_memory_max: "2G"
 
 # Force sandbox image rebuild (override with -e force_sandbox_rebuild=true)
 force_sandbox_rebuild: false
@@ -180,13 +186,13 @@ openclaw_mcp_adapter:
   codex_sandbox: "workspace-write"
   codex_approval: "never"
   codex_docker_image: "codex-mcp:latest"
-  codex_version: "0.115.0"       # Pin for reproducibility; update intentionally
+  codex_version: "0.116.0"       # Pin for reproducibility; update intentionally
   codex_memory_limit: "2g"       # Prevent runaway Codex from exhausting VPS RAM
   codex_proxy_port: 8787         # Port for the credential-injecting reverse proxy
-  codex_oauth_client_id: "DRivsnm2Mu42T3KOpqdL9p3q9ByGaHfy"  # Codex OAuth client_id for token refresh
+  codex_oauth_client_id: "DRivsnm2Mu42T3KOpqdL9p3q9ByGaHfy"  # Codex OAuth client_id for token refresh (mcp-auth-proxy)
   # Claude Code settings
   claude_code_docker_image: "claude-code-mcp:latest"
-  claude_code_version: "2.1.77"     # Pin @anthropic-ai/claude-code CLI for reproducibility
+  claude_code_version: "2.1.81"     # Pin @anthropic-ai/claude-code CLI for reproducibility
   claude_code_mcp_version: "2.2.0"  # Pin @pandysp/claude-code-mcp server for reproducibility
   claude_code_memory_limit: "2g"    # Monitor and adjust — Claude Code may need more than Codex
   # Pi MCP settings

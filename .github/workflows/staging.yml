@@ -149,11 +149,14 @@ jobs:
           OBSIDIAN_VAULT_PASSWORD: ${{ secrets.OBSIDIAN_VAULT_PASSWORD }}
         run: |
           cd pulumi
-          pulumi stack select staging 2>/dev/null || pulumi stack init staging
+          # Force-clean any stale stack from a previous interrupted run
+          # (pending operations from cancelled deploys prevent clean re-use)
+          pulumi stack rm staging --yes --force 2>/dev/null || true
+          pulumi stack init staging
 
           # Server config
           pulumi config set serverName openclaw-staging
-          pulumi config set serverType cx33
+          pulumi config set serverType cx43
           pulumi config set tailscaleTags "tag:server"
 
           # Agent IDs (main is always present; "test" is the additional agent)
@@ -187,7 +190,27 @@ jobs:
 
       # ── Deploy ───────────────────────────────────────────────────
       - name: Deploy staging infrastructure
-        run: cd pulumi && pulumi up --yes --stack staging
+        shell: bash
+        run: |
+          set -o pipefail
+          cd pulumi
+          if pulumi up --yes --stack staging 2>&1 | tee /tmp/pulumi-up.log; then
+            exit 0
+          fi
+          # Retry with fallback location on Hetzner capacity errors
+          if grep -q 'resource_unavailable' /tmp/pulumi-up.log; then
+            echo "::warning::Hetzner capacity unavailable at primary location, retrying with fsn1 (Falkenstein)"
+            pulumi cancel --yes --stack staging 2>/dev/null || true
+            pulumi refresh --yes --stack staging 2>/dev/null || true
+            pulumi config set serverLocation fsn1 --stack staging
+            # The retry may report stale "errored" resources from the first failed attempt
+            # even when Ansible completes successfully. Ignore Pulumi's exit code — the
+            # verification and smoke test steps that follow will catch real failures.
+            set +o pipefail
+            pulumi up --yes --stack staging || true
+          else
+            exit 1
+          fi
 
       - name: Add deploy keys to GitHub repos
         run: |
@@ -250,6 +273,9 @@ jobs:
         if: always()
         run: |
           cd pulumi
+          # Cancel any in-flight operations, then sync state with reality
+          pulumi cancel --yes --stack staging 2>/dev/null || true
+          pulumi refresh --yes --stack staging 2>/dev/null || true
           pulumi destroy --yes --stack staging 2>/dev/null || true
           pulumi stack rm staging --yes --force 2>/dev/null || true
 

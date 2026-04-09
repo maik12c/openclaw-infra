@@ -78,17 +78,18 @@ def get_magic_dns_suffix():
 
 def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--list":
-        # Use pre-resolved host from provision.sh if available
+        # Use pre-resolved host from provision.sh if available.
+        # Skip the Pulumi lookup entirely — it fails mid-`pulumi up`
+        # (stack outputs aren't committed yet) and is unnecessary.
         override = os.environ.get("OPENCLAW_SSH_HOST", "")
-
-        hostname = get_tailscale_hostname()
-        if not hostname and not override:
-            print(json.dumps({"_meta": {"hostvars": {}}}))
-            return
 
         if override:
             ansible_host = override
         else:
+            hostname = get_tailscale_hostname()
+            if not hostname:
+                print(json.dumps({"_meta": {"hostvars": {}}}))
+                return
             # Try to resolve to Tailscale IP
             ip = resolve_tailscale_ip(hostname)
 

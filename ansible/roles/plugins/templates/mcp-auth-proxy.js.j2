@@ -457,6 +457,81 @@ function proxyAnthropicRequest(clientReq, clientRes, body) {
   clientRes.on('close', () => clearTimeout(overallTimer));
 }
 
+// --- OpenAI API proxy (OAuth Bearer token injection) ---
+
+function proxyOpenAIApiRequest(clientReq, clientRes, body, isRetry) {
+  let token;
+  try {
+    token = getAccessToken();
+  } catch (err) {
+    clientRes.writeHead(503, { 'Content-Type': 'application/json' });
+    clientRes.end(JSON.stringify({ error: 'no_token', detail: err.message }));
+    return;
+  }
+
+  const headers = Object.assign({}, clientReq.headers);
+  delete headers.host;
+  delete headers.authorization;
+  delete headers['transfer-encoding'];
+  headers.host = 'api.openai.com';
+  headers.authorization = 'Bearer ' + token;
+  headers['content-length'] = Buffer.byteLength(body);
+
+  const options = {
+    hostname: 'api.openai.com',
+    port: 443,
+    path: clientReq.url,
+    method: clientReq.method,
+    headers,
+    timeout: CONNECT_TIMEOUT_MS,
+  };
+
+  const upReq = https.request(options, (upRes) => {
+    if (upRes.statusCode === 401 && !isRetry) {
+      upRes.resume();
+      log('warn', 'OpenAI API returned 401, attempting token refresh');
+      invalidateToken();
+      refreshToken().then(() => {
+        proxyOpenAIApiRequest(clientReq, clientRes, body, true);
+      }).catch((err) => {
+        log('error', 'Token refresh failed on OpenAI 401 retry', { error: err.message });
+        if (!clientRes.headersSent) {
+          clientRes.writeHead(502, { 'Content-Type': 'application/json' });
+          clientRes.end(JSON.stringify({ error: 'token_refresh_failed', detail: err.message }));
+        }
+      });
+      return;
+    }
+    clientRes.writeHead(upRes.statusCode, upRes.headers);
+    pipeline(upRes, clientRes, (err) => {
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE')
+        log('error', 'OpenAI API stream error', { error: err.message });
+    });
+  });
+
+  upReq.on('timeout', () => upReq.destroy(new Error('OpenAI API connect timeout')));
+  upReq.on('socket', (socket) => {
+    socket.once('connect', () => {
+      upReq.setTimeout(RESPONSE_TIMEOUT_MS, () =>
+        upReq.destroy(new Error('OpenAI API response timeout')));
+    });
+  });
+  upReq.on('error', (err) => {
+    log('error', 'OpenAI API upstream error', { error: err.message, path: clientReq.url });
+    if (!clientRes.headersSent) {
+      clientRes.writeHead(502, { 'Content-Type': 'application/json' });
+      clientRes.end(JSON.stringify({ error: 'upstream_error', detail: err.message }));
+    }
+  });
+
+  const overallTimer = setTimeout(() => {
+    upReq.destroy(new Error('OpenAI API overall timeout'));
+  }, OVERALL_TIMEOUT_MS);
+  clientRes.on('close', () => clearTimeout(overallTimer));
+  upReq.write(body);
+  upReq.end();
+}
+
 // --- GitHub proxy (streaming, per-agent PAT injection) ---
 
 function proxyGitHubRequest(clientReq, clientRes) {
@@ -549,6 +624,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       status: healthy ? 'healthy' : 'unhealthy',
       codex: { hasToken: !!codexToken, healthy: codexHealthy, circuitOpen, circuitOpenUntil: circuitOpen ? new Date(circuitOpenUntil).toISOString() : null },
+      openai_api: { hasToken: !!codexToken, healthy: codexHealthy },
       anthropic: { hasToken: !!anthropicToken, healthy: anthropicHealthy, authMethod: anthropicToken && anthropicToken.startsWith('sk-ant-oat') ? 'bearer' : 'api-key' },
       github: { agents: githubAgents, hasTokens: githubAgents.length > 0 },
     }));
@@ -567,6 +643,20 @@ const server = http.createServer((req, res) => {
       proxyAnthropicRequest(req, res, body);
     }).catch((err) => {
       log('error', 'Failed to buffer Anthropic request body', { error: err.message });
+      if (!res.headersSent) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'bad_request', detail: err.message }));
+      }
+    });
+    return;
+  }
+
+  // OpenAI API route — proxies /v1/* to api.openai.com with OAuth Bearer token
+  if (req.url.startsWith('/v1/')) {
+    bufferBody(req).then((body) => {
+      proxyOpenAIApiRequest(req, res, body, false);
+    }).catch((err) => {
+      log('error', 'Failed to buffer OpenAI API request body', { error: err.message });
       if (!res.headersSent) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'bad_request', detail: err.message }));

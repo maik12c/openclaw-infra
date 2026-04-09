@@ -134,6 +134,50 @@ echo ""
 echo "Node host installed and running."
 openclaw node status
 
+# --- Detect wiped gateway.remote.token and attempt recovery ---
+# `openclaw onboard --mode remote` with an empty --remote-token silently wipes
+# this value. This check detects the wiped state and attempts recovery.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$HOME/.openclaw/openclaw.json"
+TOKEN_LEN=$(OPENCLAW_CONFIG="$CONFIG_FILE" python3 -c "
+import json, os
+with open(os.environ['OPENCLAW_CONFIG']) as f:
+    d = json.load(f)
+print(len(d.get('gateway', {}).get('remote', {}).get('token', '')))" || echo "0")
+
+if [ "$TOKEN_LEN" = "0" ]; then
+    echo ""
+    echo "  WARNING: gateway.remote.token is empty — node host cannot authenticate."
+    echo "  Attempting to restore from Pulumi..."
+    PULUMI_TOKEN=$(cd "$SCRIPT_DIR/../pulumi" && pulumi stack output openclawGatewayToken --show-secrets || echo "")
+    if [ -n "$PULUMI_TOKEN" ]; then
+        if PULUMI_TOKEN="$PULUMI_TOKEN" python3 -c "
+import json, os, tempfile
+p = os.path.expanduser('~/.openclaw/openclaw.json')
+with open(p) as f:
+    d = json.load(f)
+d.setdefault('gateway', {}).setdefault('remote', {})['token'] = os.environ['PULUMI_TOKEN']
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), suffix='.json')
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+os.replace(tmp, p)
+"; then
+            echo "  Restored gateway.remote.token from Pulumi"
+        else
+            echo "  ERROR: Failed to write token to $CONFIG_FILE"
+            exit 1
+        fi
+    else
+        echo "  ERROR: Cannot restore — Pulumi unavailable. Set it manually:"
+        echo "    cd pulumi && pulumi stack output openclawGatewayToken --show-secrets"
+        echo "    Then edit $CONFIG_FILE → gateway.remote.token"
+        exit 1
+    fi
+else
+    echo "  gateway.remote.token: set"
+fi
+
 # --- Configure exec approvals (auto-approve all commands) ---
 echo ""
 echo "Configuring node-side exec approvals..."

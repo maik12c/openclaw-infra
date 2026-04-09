@@ -101,6 +101,45 @@
         label: "{{ item.agent_id }}"
       tags: [always]
 
+    # Docker bridge gateway IP — needed by ufw, openclaw, config, and workspace roles.
+    # On day-2 runs (Docker already installed), pre_tasks resolves it immediately.
+    # On fresh servers, Docker isn't installed yet — the docker role resolves it after install.
+    - name: Get Docker bridge gateway IP
+      ansible.builtin.shell: |
+        docker network inspect bridge --format '{{ '{{' }}(index .IPAM.Config 0).Gateway{{ '}}' }}'
+      args:
+        executable: /bin/bash
+      register: docker_bridge_result
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Set Docker bridge gateway IP fact
+      ansible.builtin.set_fact:
+        beads_docker_bridge_gateway_ip: "{{ docker_bridge_result.stdout | default('') | trim }}"
+      tags: [always]
+
+    # Tailscale WSS URL: used by telegram and post_tasks to route CLI commands through
+    # Tailscale Serve instead of local loopback (broken in OpenClaw 2026.3.13).
+    # See: https://github.com/openclaw/openclaw/issues/48167
+    - name: Resolve Tailscale WSS URL for CLI commands
+      ansible.builtin.shell: |
+        FQDN=$(tailscale status --self --json 2>/dev/null | grep -o '"DNSName": *"[^"]*"' | head -1 | sed 's/.*: *"//; s/"//; s/\.$//')
+        if [ -n "$FQDN" ] && [ "$FQDN" != "null" ]; then
+          echo "wss://$FQDN"
+        fi
+      args:
+        executable: /bin/bash
+      register: _tailscale_wss_result
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Set Tailscale WSS URL fact
+      ansible.builtin.set_fact:
+        _tailscale_wss_url: "{{ _tailscale_wss_result.stdout | default('') | trim }}"
+      tags: [always]
+
     # Obsidian GitHub tokens: agent → PAT mapping for HTTPS clones
     - name: Use manually defined Obsidian GitHub tokens (override)
       ansible.builtin.set_fact:
@@ -163,6 +202,93 @@
       when: _openclaw_workspaces | selectattr('repo_url', 'ne', '') | selectattr('deploy_key', 'ne', '') | list | length > 0
 
   post_tasks:
+    # Workaround for openclaw/openclaw#6070: `openclaw config set` strips nested
+    # sensitive-only objects (e.g., tools.web.search.grok, channels.discord.token)
+    # on subsequent writes. Inject these keys directly into the JSON file AFTER all
+    # roles have finished their `openclaw config set` calls, so nothing can strip them.
+    # Runs before handlers (which restart the gateway).
+    - name: Write sensitive keys to temp file for JSON injection
+      ansible.builtin.copy:
+        content: "{{ _sensitive_keys | to_json }}"
+        dest: /tmp/ansible-sensitive-keys.json
+        mode: "0600"
+      vars:
+        _sensitive_keys:
+          - path: ["plugins", "entries", "xai", "config", "webSearch", "apiKey"]
+            value: "{{ xai_api_key | default('') }}"
+            hash_name: "xai-api-key"
+          - path: ["channels", "discord", "token"]
+            value: "{{ discord_bot_token | default('') }}"
+            hash_name: "discord-bot-token"
+      no_log: true
+      changed_when: false
+      tags: [config, discord]
+
+    - name: Inject sensitive nested keys into config JSON (openclaw#6070 workaround)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        python3 << 'PYEOF'
+        import json, hashlib, os
+
+        config_path = os.path.expanduser("~/.openclaw/openclaw.json")
+        hash_dir = os.path.expanduser("~/.openclaw/.ansible-hashes")
+        keys_path = "/tmp/ansible-sensitive-keys.json"
+        os.makedirs(hash_dir, exist_ok=True)
+
+        d = json.load(open(config_path))
+        keys = json.load(open(keys_path))
+        changed = []
+
+        for entry in keys:
+            value = entry["value"]
+            if not value:
+                continue
+            path_parts = entry["path"]
+            hash_name = entry["hash_name"]
+
+            obj = d
+            for part in path_parts[:-1]:
+                obj = obj.setdefault(part, {})
+            leaf = path_parts[-1]
+
+            desired_hash = hashlib.sha256(value.encode()).hexdigest()
+            hash_path = os.path.join(hash_dir, hash_name)
+            try:
+                current_hash = open(hash_path).read().strip()
+            except FileNotFoundError:
+                current_hash = ""
+
+            if obj.get(leaf, "") == value and desired_hash == current_hash:
+                continue
+
+            obj[leaf] = value
+            with open(hash_path, "w") as f:
+                f.write(desired_hash + "\n")
+            changed.append(".".join(path_parts))
+
+        if changed:
+            with open(config_path, "w") as f:
+                json.dump(d, f, indent=2)
+                f.write("\n")
+            print("INJECTED: " + ", ".join(changed))
+        else:
+            print("OK")
+        PYEOF
+      args:
+        executable: /bin/bash
+      no_log: true
+      register: sensitive_inject
+      changed_when: "'INJECTED' in sensitive_inject.stdout"
+      notify: restart openclaw-gateway
+      tags: [config, discord]
+
+    - name: Clean up sensitive keys temp file
+      ansible.builtin.file:
+        path: /tmp/ansible-sensitive-keys.json
+        state: absent
+      changed_when: false
+      tags: [config, discord]
+
     - name: Ensure openclaw-gateway is started and enabled
       ansible.builtin.systemd:
         name: openclaw-gateway
@@ -184,3 +310,43 @@
         XDG_RUNTIME_DIR: "/run/user/1000"
       changed_when: false
       tags: [docker, config, openclaw, sandbox, agents, plugins, qmd, whatsapp, discord]
+
+    # After a gateway upgrade, security changes may invalidate device tokens.
+    # Devices that reconnect will appear as pending pairing requests.
+    # Since provisioning is already an admin action (requires SSH + Pulumi secrets),
+    # auto-approving pending requests is not a privilege escalation — it completes
+    # the upgrade by restoring connectivity that was already authorized.
+    - name: Re-approve pending device pairing requests
+      when: gateway_token is defined and gateway_token | length > 0
+      tags: [openclaw]
+      block:
+        - name: Wait for devices to reconnect after gateway restart
+          ansible.builtin.pause:
+            seconds: 10
+
+        - name: Read pending pairing requests
+          ansible.builtin.slurp:
+            src: /home/ubuntu/.openclaw/devices/pending.json
+          register: pending_pairings_raw
+          failed_when: false
+
+        - name: Parse pending pairing requests
+          ansible.builtin.set_fact:
+            pending_devices: >-
+              {{ (pending_pairings_raw.content | default('e30=') | b64decode | from_json | default({})) | dict2items }}
+
+        - name: Approve pending pairing requests
+          ansible.builtin.command:
+            argv:
+              - openclaw
+              - devices
+              - approve
+              - "{{ item.value.requestId }}"
+          environment:
+            XDG_RUNTIME_DIR: "/run/user/1000"
+            PATH: "/home/ubuntu/.npm-global/bin:{{ ansible_facts['env']['PATH'] }}"
+            OPENCLAW_TOKEN: "{{ gateway_token }}"
+          loop: "{{ pending_devices }}"
+          loop_control:
+            label: "{{ item.value.displayName | default(item.value.deviceId[:16]) }}"
+          no_log: true

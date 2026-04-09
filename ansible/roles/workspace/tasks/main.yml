@@ -75,6 +75,7 @@
     label: "{{ item.agent_id }}"
 
 - name: Initialize workspace git repos
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
@@ -128,6 +129,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Restore workspace content from remote on fresh server
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
@@ -163,6 +165,7 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Create workspace .gitignore files
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.copy:
     src: gitignore-workspace
     dest: "{{ item.item.workspace_dir }}/.gitignore"
@@ -173,7 +176,15 @@
     label: "{{ item.item.agent_id }}"
 
 
+- name: Set beads shared-server environment variables
+  ansible.builtin.set_fact:
+    _beads_shared_env:
+      BEADS_DOLT_SHARED_SERVER: "{{ '1' if beads_shared_server_enabled | default(false) else '' }}"
+      BEADS_DOLT_SERVER_HOST: "{{ beads_docker_bridge_gateway_ip | default('') }}"
+      BEADS_DOLT_SERVER_PORT: "{{ beads_shared_server_port | default('') | string }}"
+
 - name: Migrate beads workspace from SQLite to embedded Dolt backend
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     BEADS_DIR="{{ item.item.workspace_dir }}/.beads"
@@ -206,11 +217,19 @@
     mv "$BEADS_DIR" "$STASH"
 
     cd "{{ item.item.workspace_dir }}"
+    {% if beads_shared_server_enabled | default(false) %}
+    if [ -n "$OLD_PREFIX" ]; then
+      bd init --force --prefix "$OLD_PREFIX" -q
+    else
+      bd init --force --prefix "{{ item.item.agent_id }}" -q
+    fi
+    {% else %}
     if [ -n "$OLD_PREFIX" ]; then
       bd init --prefix "$OLD_PREFIX" -q
     else
       bd init -q
     fi
+    {% endif %}
     bd config set sync.branch beads-sync
 
     # Re-import existing issues if we had any.
@@ -227,6 +246,7 @@
     echo "MIGRATED"
   args:
     executable: /bin/bash
+  environment: "{{ _beads_shared_env }}"
   register: beads_migrate
   changed_when: "'MIGRATED' in beads_migrate.stdout"
   when: item.stat.exists and item.stat.isdir
@@ -235,122 +255,54 @@
     label: "{{ item.item.agent_id }}"
 
 - name: Initialize beads in workspace
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"
+    AGENT_ID="{{ item.item.agent_id }}"
+
     if [ ! -d ".beads" ]; then
+      {% if beads_shared_server_enabled | default(false) %}
+      bd init --force --prefix "$AGENT_ID" -q
+      {% else %}
       bd init -q
+      {% endif %}
       bd config set sync.branch beads-sync
       echo "INITIALIZED"
     else
+      {% if beads_shared_server_enabled | default(false) %}
+      # Migrate existing workspace to shared server if not already connected
+      CURRENT_SHARED=$(bd config get dolt.shared-server 2>/dev/null || echo "")
+      if [ "$CURRENT_SHARED" != "true" ]; then
+        bd init --force --prefix "$AGENT_ID" -q
+        bd config set dolt.shared-server true
+        echo "MIGRATED"
+      else
+        # Reinstall hooks to keep shims in sync with installed bd version
+        bd hooks install -q 2>/dev/null || true
+        echo "OK"
+      fi
+      # Clean up stale config from previous non-shared setup
+      bd config unset no-db 2>/dev/null || true
+      bd config unset dolt.auto-start 2>/dev/null || true
+      {% else %}
       # Reinstall hooks to keep shims in sync with installed bd version
       bd hooks install -q 2>/dev/null || true
       echo "OK"
+      {% endif %}
     fi
   args:
     executable: /bin/bash
+  environment: "{{ _beads_shared_env }}"
   register: beads_init
-  changed_when: "'INITIALIZED' in beads_init.stdout"
-  when: item.stat.exists and item.stat.isdir
-  loop: "{{ workspace_dirs.results }}"
-  loop_control:
-    label: "{{ item.item.agent_id }}"
-
-- name: Inject Beads task system into AGENTS.md
-  ansible.builtin.blockinfile:
-    path: "{{ item.item.workspace_dir }}/AGENTS.md"
-    marker: "<!-- {mark} beads-task-system -->"
-    insertbefore: "^## Safety"
-    block: |
-      ## Task System
-
-      **Beads is the canonical task system.** All actionable work is tracked as Beads issues. `TODO.md` is no longer used.
-
-      - `bd ready` — Show issues ready to work (no blockers)
-      - `bd blocked` — Show blocked issues
-      - `bd create --title="..." --type=task --priority=2` — Create issue (priority: 0=critical, 4=backlog)
-      - `bd update <id> --status=in_progress` — Claim work
-      - `bd close <id>` — Mark complete
-      - `bd sync` — Sync with git remote (run at session end)
-
-      Run `bd prime` at session start for full Beads context.
-  when: item.stat.exists and item.stat.isdir
-  loop: "{{ workspace_dirs.results }}"
-  loop_control:
-    label: "{{ item.item.agent_id }}"
-
-- name: Add sandbox path workaround to AGENTS.md
-  ansible.builtin.blockinfile:
-    path: "{{ item.item.workspace_dir }}/AGENTS.md"
-    marker: "<!-- {mark} sandbox-path-workaround -->"
-    insertafter: "^## Safety"
-    block: |
-      ## File Operations (Sandbox Bug Workaround)
-
-      There is a known OpenClaw bug (#9560) where the Read/Write/Edit tools
-      validate paths against the host filesystem path instead of the container path.
-
-      **Always use RELATIVE paths for file operations:**
-      - `SOUL.md` not `/workspace/SOUL.md`
-      - `memory/2026-02-11.md` not `/workspace/memory/2026-02-11.md`
-      - `subdir/file.txt` not `/home/ubuntu/.openclaw/workspace/subdir/file.txt`
-
-      Your working directory is already the workspace root. Relative paths work
-      correctly. Absolute paths (both /workspace/... and /home/ubuntu/...) will
-      be rejected with "escapes sandbox root."
-
-      The exec tool (shell commands) is NOT affected -- absolute /workspace/ paths
-      work fine in exec since it runs inside the container.
-  when: item.stat.exists and item.stat.isdir
-  loop: "{{ workspace_dirs.results }}"
-  loop_control:
-    label: "{{ item.item.agent_id }}"
-
-- name: Add sandbox environment guide to AGENTS.md
-  ansible.builtin.blockinfile:
-    path: "{{ item.item.workspace_dir }}/AGENTS.md"
-    marker: "<!-- {mark} sandbox-environment -->"
-    insertafter: "<!-- END sandbox-path-workaround -->"
-    block: |
-      ## Sandbox Environment
-
-      You run inside a Docker container with a writable filesystem.
-
-      ### Installing Packages
-
-      Installs outside `/workspace/` are **ephemeral** — destroyed on container restart
-      (gateway restart, reprovisioning). Fine for one-off tasks.
-
-      **One-off tools** — use `uvx` (runs without installing):
-      ```
-      uvx cowsay hello
-      uvx ruff check .
-      ```
-
-      **Persistent installs** — install to `/workspace/` so they survive restarts:
-
-      - **Python:** `uv venv /workspace/.venv && source /workspace/.venv/bin/activate && uv pip install <pkg>`
-        (next session: `source /workspace/.venv/bin/activate`)
-      - **Python (target):** `uv pip install --target /workspace/.packages <pkg>`
-        (set `PYTHONPATH=/workspace/.packages:$PYTHONPATH PATH=/workspace/.packages/bin:$PATH`)
-      - **npm:** `npm install --prefix /workspace/.npm-packages -g <pkg>`
-        (set `PATH=/workspace/.npm-packages/bin:$PATH`)
-      - **Binaries:** download to `/workspace/.bin/` and add to PATH
-
-      **Rule of thumb:** Need it tomorrow → `/workspace/`. One-off → `uvx` or install normally.
-
-      ### Filesystem Access
-
-      - **Writable:** `/home/node/`, `/workspace/`, `/tmp/`, `/var/tmp/`
-      - **Read-only:** `/usr/bin/`, `/etc/`, `/usr/lib/` (root-owned, you're UID 1000)
-      - **Network:** Outbound internet (bridge). No access to host services.
-      - **Isolation:** Only `/workspace/` is mounted from host. No gateway config, no other agents.
+  changed_when: "'INITIALIZED' in beads_init.stdout or 'MIGRATED' in beads_init.stdout"
   when: item.stat.exists and item.stat.isdir
   loop: "{{ workspace_dirs.results }}"
   loop_control:
     label: "{{ item.item.agent_id }}"
 
 - name: Initial workspace commit and push
+  no_log: true  # workspace_dirs.results carries deploy_key in item chain
   ansible.builtin.shell: |
     set -euo pipefail
     cd "{{ item.item.workspace_dir }}"

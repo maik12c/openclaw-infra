@@ -50,10 +50,8 @@ else
         echo "ERROR: Failed to read gateway token from Pulumi. Are you logged in? (pulumi login)"
         exit 1
     }
-    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken) || {
-        echo "ERROR: Failed to read claudeSetupToken from Pulumi config."
-        exit 1
-    }
+    # Anthropic Setup-Token: optional — not used when OpenAI is primary
+    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken 2>/dev/null || echo "")
 
     # Main agent config (no suffix in key names)
     export PROVISION_TELEGRAM_BOT_TOKEN=$(pulumi config get telegramBotToken 2>/dev/null || echo "")
@@ -63,6 +61,7 @@ else
     export PROVISION_TAILSCALE_HOSTNAME=$(pulumi stack output tailscaleHostname 2>/dev/null || echo "openclaw-vps")
     export PROVISION_XAI_API_KEY=$(pulumi config get xaiApiKey 2>/dev/null || echo "")
     export PROVISION_GROQ_API_KEY=$(pulumi config get groqApiKey 2>/dev/null || echo "")
+    export PROVISION_GEMINI_API_KEY=$(pulumi config get geminiApiKey 2>/dev/null || echo "")
     export PROVISION_GITHUB_TOKEN=$(pulumi config get githubToken 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL=$(pulumi config get obsidianAndyVaultRepoUrl 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_AUTH_TOKEN=$(pulumi config get obsidianAuthToken 2>/dev/null || echo "")
@@ -116,10 +115,7 @@ if [ -z "$gateway_token" ]; then
     echo "ERROR: gateway_token is empty."
     exit 1
 fi
-if [ -z "$claude_setup_token" ]; then
-    echo "ERROR: claude_setup_token is empty."
-    exit 1
-fi
+# claude_setup_token is optional — OpenAI is primary, Anthropic API key added later if needed
 
 # Validate deploy keys: if repo URL is set, deploy key must exist and be valid
 validate_deploy_key() {
@@ -142,35 +138,40 @@ validate_deploy_key() {
 validate_deploy_key "workspace (main)" \
     "$(read_env PROVISION_WORKSPACE_REPO_URL)" \
     "$(read_env PROVISION_WORKSPACE_DEPLOY_KEY)"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    validate_deploy_key "workspace ($id)" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        validate_deploy_key "workspace ($id)" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")"
+    done
+fi
 
 # Status summary
 echo "  gateway_token: set"
-echo "  claude_setup_token: set"
+echo "  claude_setup_token: $([ -n "$(read_env PROVISION_CLAUDE_SETUP_TOKEN)" ] && echo "set (unused — OpenAI is primary)" || echo "not set")"
 echo "  telegram: $([ -n "$(read_env PROVISION_TELEGRAM_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  discord: $([ -n "$(read_env PROVISION_DISCORD_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  workspace_sync (main): $([ -n "$(read_env PROVISION_WORKSPACE_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  grok_search: $([ -n "$(read_env PROVISION_XAI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  groq_voice: $([ -n "$(read_env PROVISION_GROQ_API_KEY)" ] && echo "configured" || echo "skipped")"
+echo "  gemini_image: $([ -n "$(read_env PROVISION_GEMINI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  github_mcp (main): $([ -n "$(read_env PROVISION_GITHUB_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian (andy): $([ -n "$(read_env PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian_headless: $([ -n "$(read_env PROVISION_OBSIDIAN_AUTH_TOKEN)" ] && echo "configured" || echo "skipped")"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_USER_ID")" ] && echo "  telegram_${id}: configured"
-    [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_GROUP_ID")" ] && echo "  telegram_${id}_group: configured"
-    [ -n "$(read_env "PROVISION_WHATSAPP_${upper}_PHONE")" ] && echo "  whatsapp_${id}: configured"
-    echo "  workspace_sync ($id): $([ -n "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" ] && echo "configured" || echo "skipped")"
-    echo "  github_mcp ($id): $([ -n "$(read_env "PROVISION_GITHUB_TOKEN_${upper}")" ] && echo "configured" || echo "skipped")"
-    [ -n "$(read_env "PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL")" ] && echo "  obsidian ($id): configured"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_USER_ID")" ] && echo "  telegram_${id}: configured"
+        [ -n "$(read_env "PROVISION_TELEGRAM_${upper}_GROUP_ID")" ] && echo "  telegram_${id}_group: configured"
+        [ -n "$(read_env "PROVISION_WHATSAPP_${upper}_PHONE")" ] && echo "  whatsapp_${id}: configured"
+        echo "  workspace_sync ($id): $([ -n "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" ] && echo "configured" || echo "skipped")"
+        echo "  github_mcp ($id): $([ -n "$(read_env "PROVISION_GITHUB_TOKEN_${upper}")" ] && echo "configured" || echo "skipped")"
+        [ -n "$(read_env "PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL")" ] && echo "  obsidian ($id): configured"
+    done
+fi
 
 # Read Codex auth credentials from local machine (optional)
 # Run `codex login` locally to create ~/.codex/auth.json before deploying.
@@ -200,6 +201,7 @@ static = [
     ('workspace_repo_url', 'PROVISION_WORKSPACE_REPO_URL'),
     ('xai_api_key', 'PROVISION_XAI_API_KEY'),
     ('groq_api_key', 'PROVISION_GROQ_API_KEY'),
+    ('gemini_api_key', 'PROVISION_GEMINI_API_KEY'),
     ('github_token', 'PROVISION_GITHUB_TOKEN'),
     ('obsidian_andy_vault_repo_url', 'PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL'),
     ('obsidian_auth_token', 'PROVISION_OBSIDIAN_AUTH_TOKEN'),
@@ -243,12 +245,14 @@ append_deploy_key() {
     fi
 }
 append_deploy_key "workspace_deploy_key" "$(read_env PROVISION_WORKSPACE_DEPLOY_KEY)" "$SECRETS_FILE"
-for id in "${agent_ids[@]}"; do
-    [ -z "$id" ] && continue
-    upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
-    append_deploy_key "workspace_${id}_deploy_key" \
-        "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")" "$SECRETS_FILE"
-done
+if [ -n "$agent_ids_str" ]; then
+    for id in "${agent_ids[@]}"; do
+        [ -z "$id" ] && continue
+        upper=$(echo "$id" | tr '[:lower:]' '[:upper:]')
+        append_deploy_key "workspace_${id}_deploy_key" \
+            "$(read_env "PROVISION_WORKSPACE_${upper}_DEPLOY_KEY")" "$SECRETS_FILE"
+    done
+fi
 
 # Append Codex auth credentials (block scalar preserves JSON structure)
 append_deploy_key "codex_auth_json" "$codex_auth_json" "$SECRETS_FILE"

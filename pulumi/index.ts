@@ -41,6 +41,7 @@ const telegramBotToken = config.getSecret("telegramBotToken");
 const discordBotToken = config.getSecret("discordBotToken");
 const xaiApiKey = config.getSecret("xaiApiKey");
 const groqApiKey = config.getSecret("groqApiKey");
+const geminiApiKey = config.getSecret("geminiApiKey");
 const obsidianAuthToken = config.getSecret("obsidianAuthToken");
 const obsidianVaultPassword = config.getSecret("obsidianVaultPassword");
 
@@ -50,7 +51,7 @@ const tailscaleTags = config.get("tailscaleTags"); // e.g., "tag:server"
 
 // Server configuration (with defaults)
 const serverName = config.get("serverName") || "openclaw-vps";
-const serverType = config.get("serverType") || "cx33"; // Default cx33 (4 vCPU, 8GB); use cx43 (8 vCPU, 16GB) for qmd
+const serverType = config.get("serverType") || "cx43"; // Default cx43 (8 vCPU, 16GB)
 const serverLocation = config.get("serverLocation") || "nbg1"; // Nuremberg (alternatives: fsn1=Falkenstein, hel1=Helsinki)
 const serverImage = config.get("serverImage") || "ubuntu-24.04";
 
@@ -166,6 +167,7 @@ const provisionEnv: Record<string, pulumi.Input<string>> = {
     PROVISION_TAILSCALE_HOSTNAME: serverName,
     PROVISION_XAI_API_KEY: xaiApiKey || "",
     PROVISION_GROQ_API_KEY: groqApiKey || "",
+    PROVISION_GEMINI_API_KEY: geminiApiKey || "",
     PROVISION_GITHUB_TOKEN: githubToken || "",
     PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL: obsidianAndyVaultRepoUrl || "",
     PROVISION_OBSIDIAN_AUTH_TOKEN: obsidianAuthToken || "",

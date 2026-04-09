@@ -9,6 +9,16 @@
     path: /home/ubuntu/.openclaw/extensions/openclaw-mcp-adapter/index.ts
   register: plugin_dir
 
+- name: Save existing MCP adapter config before potential reinstall
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.plugins.entries["openclaw-mcp-adapter"].config // empty' \
+      /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo ""
+  args:
+    executable: /bin/bash
+  register: saved_mcp_adapter_config
+  changed_when: false
+
 - name: Install mcp-adapter plugin
   when: not plugin_dir.stat.exists or force_plugin_reinstall | bool
   block:
@@ -53,9 +63,23 @@
       ansible.builtin.shell: |
         set -euo pipefail
         export XDG_RUNTIME_DIR=/run/user/1000
-        openclaw plugins install "{{ openclaw_mcp_adapter.npm_package }}"
+        openclaw plugins install --pin "{{ openclaw_mcp_adapter.npm_package }}"
       args:
         executable: /bin/bash
+
+    - name: Restore MCP adapter config after reinstall
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export XDG_RUNTIME_DIR=/run/user/1000
+        openclaw config set plugins.entries.openclaw-mcp-adapter.config \
+          --json '{{ saved_mcp_adapter_config.stdout }}'
+        # Invalidate hash so the final config write is not skipped due to stale hash
+        rm -f /home/ubuntu/.openclaw/.ansible-hashes/mcp-adapter-config
+        echo "RESTORED"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: saved_mcp_adapter_config.stdout | length > 0 and saved_mcp_adapter_config.stdout != 'null'
 
     - name: Ensure plugin is in allowlists
       ansible.builtin.shell: |
@@ -776,6 +800,7 @@
         executable: /bin/bash
       when: codex_image_check.rc != 0 or codex_dockerfile_changed.changed or (force_codex_rebuild | bool)
       register: codex_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Codex MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.codex_docker_image }}\""
@@ -862,42 +887,12 @@
       changed_when: false
       when: codex_container_removal is changed
 
-    - name: Restart gateway to pick up new Codex MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: codex_image_build is changed
-
-    - name: Wait for gateway to be healthy after Codex image rebuild
-      ansible.builtin.command: openclaw health
-      register: codex_health_check
-      retries: 5
-      delay: 3
-      until: codex_health_check.rc == 0
-      changed_when: false
-      when: codex_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs
-      failed_when: false
-
-    - name: Report gateway failure with diagnostic context
+    - name: Report Codex MCP build or smoke test failure
       ansible.builtin.fail:
-        msg: |
-          Gateway failed health check after Codex MCP image rebuild.
-          Recent gateway logs:
-          {{ gateway_crash_logs.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+        msg: >-
+          Codex MCP Docker image build or smoke test failed.
+          Check task output above for details.
 
 - name: Build Claude Code MCP Docker image
   when: claude_setup_token | default('') | length > 0
@@ -929,6 +924,7 @@
         executable: /bin/bash
       when: claude_code_image_check.rc != 0 or claude_code_dockerfile_changed.changed or (force_claude_code_rebuild | bool)
       register: claude_code_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Claude Code MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.claude_code_docker_image }}\""
@@ -988,42 +984,12 @@
       changed_when: false
       when: claude_code_container_removal is changed
 
-    - name: Restart gateway to pick up new Claude Code MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: claude_code_image_build is changed
-
-    - name: Wait for gateway to be healthy after Claude Code image rebuild
-      ansible.builtin.command: openclaw health
-      register: claude_code_health_check
-      retries: 5
-      delay: 3
-      until: claude_code_health_check.rc == 0
-      changed_when: false
-      when: claude_code_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for Claude Code diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs_claude
-      failed_when: false
-
-    - name: Report gateway failure with Claude Code diagnostic context
+    - name: Report Claude Code MCP build or smoke test failure
       ansible.builtin.fail:
-        msg: |
-          Gateway failed health check after Claude Code MCP image rebuild.
-          Recent gateway logs:
-          {{ gateway_crash_logs_claude.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+        msg: >-
+          Claude Code MCP Docker image build or smoke test failed.
+          Check task output above for details.
 
 - name: Build Pi MCP Docker image
   when: claude_setup_token | default('') | length > 0
@@ -1055,6 +1021,7 @@
         executable: /bin/bash
       when: pi_mcp_image_check.rc != 0 or pi_mcp_dockerfile_changed.changed or (force_pi_mcp_rebuild | bool)
       register: pi_mcp_image_build
+      notify: restart openclaw-gateway
 
     - name: Verify Pi MCP image was built
       ansible.builtin.command: "docker image inspect \"{{ openclaw_mcp_adapter.pi_mcp_docker_image }}\""
@@ -1164,44 +1131,14 @@
       changed_when: false
       when: pi_mcp_container_removal is changed
 
-    - name: Restart gateway to pick up new Pi MCP image
-      ansible.builtin.systemd:
-        name: openclaw-gateway
-        state: restarted
-        scope: user
-      become: false
-      environment:
-        XDG_RUNTIME_DIR: /run/user/1000
-      when: pi_mcp_image_build is changed
-
-    - name: Wait for gateway to be healthy after Pi image rebuild
-      ansible.builtin.command: openclaw health
-      register: pi_health_check
-      retries: 5
-      delay: 3
-      until: pi_health_check.rc == 0
-      changed_when: false
-      when: pi_mcp_image_build is changed
-
   rescue:
-    - name: Capture gateway logs for Pi MCP diagnosis
-      ansible.builtin.shell: |
-        export XDG_RUNTIME_DIR=/run/user/1000
-        journalctl --user -u openclaw-gateway --since "2 minutes ago" --no-pager | tail -50
-      args:
-        executable: /bin/bash
-      register: gateway_crash_logs_pi
-      failed_when: false
-
-    - name: Report Pi MCP build or smoke test failure with diagnostic context
+    - name: Report Pi MCP build or smoke test failure
       ansible.builtin.fail:
         msg: |
           Pi MCP Docker image build or smoke test failed.
           Pi auth smoke test stdout: {{ pi_auth_smoke.stdout | default('(did not run or not reached)') }}
           Pi auth smoke test stderr: {{ pi_auth_smoke.stderr | default('(did not run or not reached)') }}
-          Recent gateway logs:
-          {{ gateway_crash_logs_pi.stdout | default('(no logs captured)') }}
-          Manual recovery: ssh ubuntu@<host> 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u openclaw-gateway -n 100'
+          Check task output above for details.
 
 - name: Validate token variable names are defined
   ansible.builtin.assert:
@@ -1395,6 +1332,7 @@
     {% endfor %}
     fi
 
+    {% if qmd_workspaces | length > 0 %}
     # qmd servers — HTTP daemon mode (decoupled from gateway lifecycle)
     # Port assignment positional over qmd_workspaces list, must match qmd role.
     QMD_BINARY="{{ (qmd_mcp_binary.stdout | default('')) | trim }}"
@@ -1407,13 +1345,17 @@
     else
         echo "NOTE: qmd binary not found, skipping qmd MCP servers"
     fi
+    {% endif %}
 
     {% if node_exec_enabled | default(false) %}
     # node-exec: Mac shell access via openclaw nodes run (no Docker, no credentials)
     NODE_EXEC_BINARY="{{ (node_exec_mcp_binary.stdout | default('')) | trim }}"
     OPENCLAW_BIN=$(which openclaw 2>/dev/null || echo "")
-    NODE_ID=$(XDG_RUNTIME_DIR=/run/user/1000 openclaw config get tools.exec.node 2>/dev/null || echo "")
-    GW_TOKEN=$(XDG_RUNTIME_DIR=/run/user/1000 openclaw config get gateway.auth.token 2>/dev/null || echo "")
+    NODE_ID=$(jq -r '.tools.exec.node // empty' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "")
+    GW_TOKEN=$(jq -r '.gateway.auth.token // empty' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "")
+    # In 2026.3.13+, nodes is owner-only. Loopback shared-token auth lacks owner scope.
+    # Route through Tailscale Serve so the CLI gets full auth via allowTailscale.
+    GW_URL="{{ _tailscale_wss_url }}"
     if [ -n "$NODE_ID" ] && [ -n "$OPENCLAW_BIN" ] && [ -x "$NODE_EXEC_BINARY" ]; then
     {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'node-exec') %}
         SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
@@ -1421,7 +1363,8 @@
             --arg node_id "$NODE_ID" \
             --arg openclaw_bin "$OPENCLAW_BIN" \
             --arg gw_token "$GW_TOKEN" \
-            '. + [{name: $name, transport: "stdio", command: $cmd, env: {NODE_ID: $node_id, OPENCLAW_BIN: $openclaw_bin, XDG_RUNTIME_DIR: "/run/user/1000", OPENCLAW_TOKEN: $gw_token, DEFAULT_CWD: "/private/tmp"}}]')
+            --arg gw_url "$GW_URL" \
+            '. + [{name: $name, transport: "stdio", command: $cmd, env: {NODE_ID: $node_id, OPENCLAW_BIN: $openclaw_bin, XDG_RUNTIME_DIR: "/run/user/1000", OPENCLAW_GATEWAY_URL: $gw_url, OPENCLAW_GATEWAY_TOKEN: $gw_token, OPENCLAW_LOG_LEVEL: "error", DEFAULT_CWD: "/private/tmp"}}]')
     {% endfor %}
     else
         echo "NOTE: Skipping node-exec MCP servers (node_id='${NODE_ID}', binary='${NODE_EXEC_BINARY}')" >&2
@@ -1457,14 +1400,17 @@
         D_NORM=$(echo "$DESIRED" | jq -cS '.')
         DESIRED_HASH=$(echo -n "$D_NORM" | sha256sum | cut -d' ' -f1)
         CURRENT_HASH=$(cat "$HASH_DIR/mcp-adapter-config" 2>/dev/null) || CURRENT_HASH=""
-        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ]; then
+        # Force re-write if hash matches but actual config has 0 servers (hash-desync recovery)
+        ACTUAL_SERVERS=$(jq '.plugins.entries["openclaw-mcp-adapter"].config.servers | length' \
+          /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "0")
+        if [ "$DESIRED_HASH" != "$CURRENT_HASH" ] || [ "$ACTUAL_SERVERS" -eq 0 ]; then
             openclaw config set plugins.entries.openclaw-mcp-adapter.config --json "$DESIRED"
             echo "$DESIRED_HASH" > "$HASH_DIR/mcp-adapter-config"
             CHANGED="yes"
         fi
 
         # Check enabled state
-        ENABLED=$(openclaw config get plugins.entries.openclaw-mcp-adapter.enabled 2>/dev/null) || ENABLED=""
+        ENABLED=$(jq -r '.plugins.entries["openclaw-mcp-adapter"].enabled // false' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null) || ENABLED=""
         if [ "$ENABLED" != "true" ]; then
             openclaw config set plugins.entries.openclaw-mcp-adapter.enabled true
             CHANGED="yes"
@@ -1482,14 +1428,26 @@
       ansible.builtin.shell: |
         set -euo pipefail
         export XDG_RUNTIME_DIR=/run/user/1000
-        ENABLED=$(openclaw config get plugins.entries.openclaw-mcp-adapter.enabled 2>/dev/null | tail -1) || {
-            echo "ERROR: Failed to read plugin enabled state after config set"
-            exit 1
-        }
+        ENABLED=$(jq -r '.plugins.entries["openclaw-mcp-adapter"].enabled // false' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null)
         if [ "$ENABLED" != "true" ]; then
             echo "ERROR: Plugin enabled state is '$ENABLED', expected 'true'"
             exit 1
         fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Verify MCP adapter has servers configured
+      ansible.builtin.shell: |
+        set -euo pipefail
+        SERVERS_COUNT=$(jq '.plugins.entries["openclaw-mcp-adapter"].config.servers | length' \
+          /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "0")
+        EXPECTED={{ _openclaw_mcp_servers | length }}
+        if [ "$SERVERS_COUNT" -eq 0 ]; then
+            echo "FATAL: MCP adapter has 0 servers configured (expected ~$EXPECTED)"
+            exit 1
+        fi
+        echo "OK: $SERVERS_COUNT servers configured (expected ~$EXPECTED)"
       args:
         executable: /bin/bash
       changed_when: false
@@ -1521,12 +1479,14 @@
   ansible.builtin.pause:
     seconds: 5
 
-- name: Verify mcp-adapter plugin is loaded
-  ansible.builtin.shell: |
-    export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw plugins list --json 2>/dev/null | grep -v '^\[' | jq -e '.plugins[] | select(.id == "openclaw-mcp-adapter")'
-  args:
-    executable: /bin/bash
+- name: Verify gateway is active after plugin config
+  ansible.builtin.command: systemctl --user is-active openclaw-gateway
+  environment:
+    XDG_RUNTIME_DIR: /run/user/1000
+  register: gateway_active_check
+  retries: 8
+  delay: 5
+  until: gateway_active_check.rc == 0
   changed_when: false
 
 - name: Check gateway logs for mcp-adapter errors
@@ -1571,8 +1531,7 @@
 
 - name: Get agent list for index resolution
   ansible.builtin.shell: |
-    export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw agents list --json
+    jq -c '.agents.list // []' /home/ubuntu/.openclaw/openclaw.json
   args:
     executable: /bin/bash
   register: agents_list_json
@@ -1595,14 +1554,7 @@
         echo "SKIP: Agent '{{ item.id }}' not found in agents list"
         exit 0
     fi
-    CURRENT=$(openclaw config get "agents.list.${AGENT_INDEX}.tools.deny" 2>&1) || {
-        if echo "$CURRENT" | grep -qi "not set\|not found\|does not exist\|undefined"; then
-            CURRENT="[]"
-        else
-            echo "ERROR reading tools.deny for {{ item.id }}: $CURRENT" >&2
-            exit 1
-        fi
-    }
+    CURRENT=$(jq -c ".agents.list[${AGENT_INDEX}].tools.deny // []" /home/ubuntu/.openclaw/openclaw.json 2>/dev/null) || CURRENT="[]"
     DESIRED='{{ deny_list | to_json }}'
     C_NORM=$(echo "$CURRENT" | jq -cS 'sort' 2>/dev/null || echo "PARSE_FAIL")
     D_NORM=$(echo "$DESIRED" | jq -cS 'sort')
@@ -1643,15 +1595,7 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
-    CONFIG=$(openclaw config get plugins.entries.openclaw-mcp-adapter.config 2>&1) || {
-        if echo "$CONFIG" | grep -qi "not set\|not found\|does not exist\|undefined"; then
-            CONFIG='{}'
-        else
-            echo "ERROR reading plugin config: $CONFIG" >&2
-            exit 1
-        fi
-    }
-    QMD_COUNT=$(echo "$CONFIG" | jq '[.servers[]? | select(.name | startswith("qmd"))] | length')
+    QMD_COUNT=$(jq '[.plugins.entries["openclaw-mcp-adapter"].config.servers[]? | select(.name | startswith("qmd"))] | length' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "0")
     echo "$QMD_COUNT"
   args:
     executable: /bin/bash
@@ -1661,12 +1605,8 @@
 - name: Check current memorySearch state
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    RESULT=$(openclaw config get agents.defaults.memorySearch.enabled 2>&1) || true
-    if echo "$RESULT" | grep -q "not found\|not set\|undefined"; then
-      echo "unset"
-    else
-      echo "$RESULT"
-    fi
+    RESULT=$(jq -r '.agents.defaults.memorySearch.enabled // "unset"' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "unset")
+    echo "$RESULT"
   args:
     executable: /bin/bash
   register: memory_search_state
