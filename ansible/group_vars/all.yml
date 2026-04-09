@@ -39,9 +39,11 @@ openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h
 openclaw_elevated_default: "off"
 
 # Voice transcription (OpenAI Whisper)
-# Uses a dedicated openai-audio provider (no api type — for audio/transcriptions endpoint).
-# The main openai provider has api: "openai-responses" which is incompatible with audio.
-openclaw_audio_provider: "openai-audio"
+# Uses a dedicated "openai-transcribe" provider with api: "openai-completions".
+# Root cause: the main "openai" provider has api: "openai-responses" which calls
+# /v1/audio/transcriptions WITHOUT the model parameter → HTTP 400 from OpenAI.
+# "openai-completions" correctly passes the model parameter in the audio request.
+openclaw_audio_provider: "openai-transcribe"
 openclaw_audio_model: "whisper-1"
 
 # Image generation (Google Gemini)
