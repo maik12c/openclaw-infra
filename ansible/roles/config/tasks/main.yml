@@ -14,9 +14,10 @@
     - content: "{{ groq_api_key | default('') }}"
       dest: /tmp/ansible-groq-api-key
     - content: >-
+        {%- set _openai_key = {'providers': {'openai': {'apiKey': openai_api_key}}} if (openai_api_key is defined and openai_api_key | length > 0) else {} -%}
         {%- set _groq = {'providers': {'groq': {'baseUrl': openclaw_groq_base_url, 'apiKey': groq_api_key, 'models': []}}} if (groq_api_key is defined and groq_api_key | length > 0) else {} -%}
         {%- set _google = {'providers': {'google': {'baseUrl': 'https://generativelanguage.googleapis.com/v1beta', 'apiKey': gemini_api_key, 'models': []}}} if (gemini_api_key is defined and gemini_api_key | length > 0) else {} -%}
-        {{ openclaw_custom_models | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
+        {{ openclaw_custom_models | combine(_openai_key, recursive=true) | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
       dest: /tmp/ansible-custom-models
     - content: "{{ openclaw_model_fallbacks | to_json }}"
       dest: /tmp/ansible-model-fallbacks
@@ -106,12 +107,15 @@
         done
         {% endif %}
 
-        # Voice transcription — Groq provider cleanup (setting is in the settings task,
-        # after "openclaw config set models --json" which replaces the entire models object)
-        {% if not (groq_api_key is defined and groq_api_key | length > 0) %}
-        for key in models.providers.groq tools.media.audio.enabled tools.media.audio.models; do
+        # Voice transcription cleanup
+        {% if not (openai_api_key is defined and openai_api_key | length > 0) %}
+        for key in tools.media.audio.enabled tools.media.audio.models; do
             check_unset "$key"
         done
+        {% endif %}
+        # Legacy Groq provider cleanup
+        {% if not (groq_api_key is defined and groq_api_key | length > 0) %}
+        openclaw config unset models.providers.groq 2>/dev/null || true
         {% endif %}
 
         if [ -n "$CHANGED" ]; then echo "UPDATED"; else echo "OK"; fi
@@ -419,8 +423,8 @@
         done
         {% endif %}
 
-        # Voice transcription — enable audio (provider merged into models JSON above; cleanup in secrets task)
-        {% if groq_api_key is defined and groq_api_key | length > 0 %}
+        # Voice transcription — enable audio (OpenAI Whisper; cleanup in secrets task)
+        {% if openai_api_key is defined and openai_api_key | length > 0 %}
         check_set tools.media.audio.enabled true
         check_set_json tools.media.audio.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}"}]'
         {% endif %}

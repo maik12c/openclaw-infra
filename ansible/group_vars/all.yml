@@ -4,7 +4,9 @@
 
 openclaw_timezone: "Europe/Berlin"
 openclaw_model_primary: "openai-codex/gpt-5.4"
-openclaw_model_fallbacks: []
+openclaw_model_fallbacks:
+  - "openai/gpt-5.4-mini"
+openclaw_thinking_default: "off"
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
 # openai-codex/gpt-5.4 is built-in — no custom model definition needed.
@@ -36,11 +38,10 @@ openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (defaul
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
 openclaw_elevated_default: "off"
 
-# Voice transcription (Groq Whisper)
-# Set via: pulumi config set groqApiKey --secret
-openclaw_audio_provider: "groq"
-openclaw_audio_model: "whisper-large-v3-turbo"
-openclaw_groq_base_url: "https://api.groq.com/openai/v1"
+# Voice transcription (OpenAI Whisper)
+# Uses the openai provider — enabled when openaiApiKey is set in Pulumi.
+openclaw_audio_provider: "openai"
+openclaw_audio_model: "whisper-1"
 
 # Image generation (Google Gemini)
 # Set via: pulumi config set geminiApiKey --secret
