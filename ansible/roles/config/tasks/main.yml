@@ -347,7 +347,7 @@
 
         # Heartbeat interval
         check_set agents.defaults.heartbeat.every "{{ openclaw_heartbeat_interval }}"
-        check_set agents.defaults.heartbeat.model "anthropic/claude-sonnet-4-20250514"
+        check_set agents.defaults.heartbeat.model "claude-cli/claude-sonnet-4-6"
         {% if openclaw_heartbeat_active_hours is defined and openclaw_heartbeat_active_hours %}
         check_set_json agents.defaults.heartbeat.activeHours '{{ openclaw_heartbeat_active_hours | to_json }}'
         {% endif %}
@@ -374,6 +374,8 @@
         check_set agents.defaults.compaction.mode "{{ openclaw_compaction_mode }}"
         check_set agents.defaults.compaction.reserveTokensFloor "{{ openclaw_compaction_reserve_tokens_floor }}"
         check_set_json agents.defaults.compaction.memoryFlush "$(cat /tmp/ansible-compaction-memoryflush)"
+        # Show "Compacting context..." notice in chat (2026.4.2+, default: true)
+        check_set_json agents.defaults.compaction.notifyUser '{{ openclaw_compaction_notify_user | to_json }}'
 
         # Exec configuration (applies to both sandbox and node exec)
         # NOTE: Gateway sends VPS workspace path as CWD to nodes — does not exist on Mac.
@@ -576,4 +578,52 @@
     executable: /bin/bash
   register: auth_profiles_result
   changed_when: "'CHANGED:' in auth_profiles_result.stdout"
+  notify: restart openclaw-gateway
+
+- name: Migrate session model provider to match primary model
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 << 'PYEOF'
+    import json, glob
+
+    # Extract provider prefix from the primary model (e.g., "claude-cli" from "claude-cli/claude-opus-4-6")
+    primary = "{{ openclaw_model_primary }}"
+    if "/" not in primary:
+        raise ValueError(f"openclaw_model_primary must be provider/model format, got: {primary}")
+    target_provider, target_model = primary.split("/", 1)
+
+    changed_agents = []
+    for sessions_file in sorted(glob.glob("/home/ubuntu/.openclaw/agents/*/sessions/sessions.json")):
+        try:
+            with open(sessions_file) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            continue
+
+        modified = False
+        for key, val in data.items():
+            if not isinstance(val, dict):
+                continue
+            current_provider = val.get("modelProvider", "")
+            # Only migrate sessions pinned to a different provider
+            if current_provider and current_provider != target_provider:
+                val["modelProvider"] = target_provider
+                val["model"] = target_model
+                modified = True
+
+        if modified:
+            with open(sessions_file, "w") as f:
+                json.dump(data, f, indent=2)
+            agent = sessions_file.split("/agents/")[1].split("/")[0]
+            changed_agents.append(agent)
+
+    if changed_agents:
+        print("CHANGED: " + ", ".join(changed_agents))
+    else:
+        print("OK")
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: session_migration_result
+  changed_when: "'CHANGED:' in session_migration_result.stdout"
   notify: restart openclaw-gateway

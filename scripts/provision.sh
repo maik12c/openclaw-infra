@@ -50,10 +50,8 @@ else
         echo "ERROR: Failed to read gateway token from Pulumi. Are you logged in? (pulumi login)"
         exit 1
     }
-    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken) || {
-        echo "ERROR: Failed to read claudeSetupToken from Pulumi config."
-        exit 1
-    }
+    export PROVISION_CLAUDE_SETUP_TOKEN=$(pulumi config get claudeSetupToken 2>/dev/null || echo "")
+    export PROVISION_CLAUDE_OAUTH_CREDENTIALS=$(pulumi config get claudeOAuthCredentials 2>/dev/null || echo "")
 
     # Main agent config (no suffix in key names)
     export PROVISION_TELEGRAM_BOT_TOKEN=$(pulumi config get telegramBotToken 2>/dev/null || echo "")
@@ -115,8 +113,9 @@ if [ -z "$gateway_token" ]; then
     echo "ERROR: gateway_token is empty."
     exit 1
 fi
-if [ -z "$claude_setup_token" ]; then
-    echo "ERROR: claude_setup_token is empty."
+claude_oauth_credentials=$(read_env PROVISION_CLAUDE_OAUTH_CREDENTIALS)
+if [ -z "$claude_setup_token" ] && [ -z "$claude_oauth_credentials" ]; then
+    echo "ERROR: neither claudeSetupToken nor claudeOAuthCredentials is set. At least one is required."
     exit 1
 fi
 
@@ -153,7 +152,8 @@ fi
 
 # Status summary
 echo "  gateway_token: set"
-echo "  claude_setup_token: set"
+echo "  claude_setup_token: $([ -n "$claude_setup_token" ] && echo "set" || echo "skipped")"
+echo "  claude_oauth: $([ -n "$claude_oauth_credentials" ] && echo "set" || echo "skipped")"
 echo "  telegram: $([ -n "$(read_env PROVISION_TELEGRAM_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  discord: $([ -n "$(read_env PROVISION_DISCORD_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  workspace_sync (main): $([ -n "$(read_env PROVISION_WORKSPACE_REPO_URL)" ] && echo "configured" || echo "skipped")"
@@ -196,6 +196,7 @@ import json, sys, os
 static = [
     ('gateway_token', 'PROVISION_GATEWAY_TOKEN'),
     ('claude_setup_token', 'PROVISION_CLAUDE_SETUP_TOKEN'),
+    ('claude_oauth_credentials', 'PROVISION_CLAUDE_OAUTH_CREDENTIALS'),
     ('telegram_bot_token', 'PROVISION_TELEGRAM_BOT_TOKEN'),
     ('telegram_user_id', 'PROVISION_TELEGRAM_USER_ID'),
     ('telegram_group_id', 'PROVISION_TELEGRAM_GROUP_ID'),

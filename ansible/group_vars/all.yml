@@ -3,12 +3,17 @@
 # Secrets are passed via scripts/provision.sh from Pulumi config.
 
 openclaw_timezone: "Europe/Berlin"
-openclaw_model_primary: "anthropic/claude-opus-4-6"
-openclaw_model_fallbacks:
-  - "anthropic/claude-opus-4-5"
+openclaw_model_primary: "claude-cli/claude-opus-4-6"
+openclaw_model_fallbacks: []
 openclaw_thinking_default: "high"
 
-# Custom model definitions (for models not yet in OpenClaw's built-in registry)
+# CLI backend: OpenClaw shells out to the `claude` CLI binary which manages its own
+# OAuth auth (Claude Max subscription). No direct Anthropic API calls for the primary model.
+# The claude CLI is installed via npm (@anthropic-ai/claude-code) and authenticated via
+# ~/.claude/.credentials.json (OAuth access + refresh tokens from Pulumi secret).
+#
+# Custom model definitions still needed for the anthropic provider (used by MCP proxy
+# containers: codex-mcp, claude-code-mcp, pi-mcp) which call the API directly.
 openclaw_custom_models:
   mode: "merge"
   providers:
@@ -20,25 +25,13 @@ openclaw_custom_models:
           name: "Claude Opus 4.6"
           reasoning: true
           input: ["text", "image"]
-          # 200K limit: Claude Max (subscription / setup-token auth) does NOT support 1M context.
-          # Anthropic rejects the context-1m-2025-08-07 beta header for sk-ant-oat* OAuth tokens.
-          # OpenClaw auto-skips context1m when it detects subscription auth (PR #24620, Feb 2026).
-          #
-          # This value drives compaction timing: OpenClaw compacts at
-          #   contextWindow - reserveTokensFloor  (see openclaw_compaction_reserve_tokens_floor below).
-          # Setting it to 1000000 would push the compaction trigger to ~976K — the API rejects at
-          # 200K first, compaction never fires, and sessions die with duplicate Telegram deliveries.
-          #
-          # API key auth (sk-ant-api03-*): if you switch away from Claude Max, you can set:
-          #   contextWindow: 1000000
-          #   context1m: true   ← OpenClaw injects the beta header automatically
-          # Still keep reserveTokensFloor high (~50K) to compact well before 200K — extended context
-          # bills the ENTIRE input at the premium rate ($10 vs $5/MTok input, $37.50 vs $25/MTok
-          # output), not just the excess. Staying under 200K is almost always cheaper.
+          # contextWindow drives compaction timing for the anthropic provider.
+          # The claude-cli backend manages its own context window (200K for Max subscription).
+          # Keep 200K here for any direct-API fallback paths.
           contextWindow: 200000
           maxTokens: 128000
 nodejs_major_version: 25
-openclaw_version: "2026.3.24"
+openclaw_version: "2026.4.9"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -69,6 +62,7 @@ openclaw_compaction_memory_flush_prompt: >-
   Skip routine exchanges. If nothing worth storing: NO_FLUSH
 openclaw_compaction_memory_flush_system_prompt: >-
   Extract only durable facts worth remembering across sessions. Be selective.
+openclaw_compaction_notify_user: true   # show "Compacting context..." notice in chat (2026.4.2+)
 
 # Concurrency settings
 openclaw_max_concurrent: 8
@@ -197,13 +191,13 @@ openclaw_mcp_adapter:
   codex_sandbox: "workspace-write"
   codex_approval: "never"
   codex_docker_image: "codex-mcp:latest"
-  codex_version: "0.116.0"       # Pin for reproducibility; update intentionally
+  codex_version: "0.118.0"       # Pin for reproducibility; update intentionally
   codex_memory_limit: "2g"       # Prevent runaway Codex from exhausting VPS RAM
   codex_proxy_port: 8787         # Port for the credential-injecting reverse proxy
   codex_oauth_client_id: "DRivsnm2Mu42T3KOpqdL9p3q9ByGaHfy"  # Codex OAuth client_id for token refresh
   # Claude Code settings
   claude_code_docker_image: "claude-code-mcp:latest"
-  claude_code_version: "2.1.81"     # Pin @anthropic-ai/claude-code CLI for reproducibility
+  claude_code_version: "2.1.97"     # Pin @anthropic-ai/claude-code CLI for reproducibility
   claude_code_mcp_version: "2.2.0"  # Pin @pandysp/claude-code-mcp server for reproducibility
   claude_code_memory_limit: "2g"    # Monitor and adjust — Claude Code may need more than Codex
   # Pi MCP settings
