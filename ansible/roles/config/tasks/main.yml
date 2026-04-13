@@ -390,6 +390,13 @@
         openclaw config unset tools.exec.node 2>/dev/null || true
         {% endif %}
 
+        # Skip bootstrap: prevent gateway from re-scaffolding workspace context files
+        # (SOUL.md, IDENTITY.md, etc.) with factory templates on every message/cron tick.
+        # Without this, Obsidian Sync conflict resolution can delete a file momentarily,
+        # and ensureAgentWorkspace() recreates it from template — causing a wipe loop.
+        # Day-0 safe: onboard runs before config role, so initial scaffold still happens.
+        check_set agents.defaults.skipBootstrap true
+
         # Sandbox configuration
         check_set agents.defaults.sandbox.mode "{{ openclaw_sandbox_mode }}"
         check_set agents.defaults.sandbox.workspaceAccess "{{ openclaw_sandbox_workspace_access }}"
