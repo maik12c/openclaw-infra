@@ -381,6 +381,8 @@
         check_set agents.defaults.compaction.mode "{{ openclaw_compaction_mode }}"
         check_set agents.defaults.compaction.reserveTokensFloor "{{ openclaw_compaction_reserve_tokens_floor }}"
         check_set_json agents.defaults.compaction.memoryFlush "$(cat /tmp/ansible-compaction-memoryflush)"
+        # Show "Compacting context..." notice in chat (2026.4.2+, default: true)
+        check_set_json agents.defaults.compaction.notifyUser '{{ openclaw_compaction_notify_user | to_json }}'
 
         # Exec configuration (applies to both sandbox and node exec)
         # NOTE: Gateway sends VPS workspace path as CWD to nodes — does not exist on Mac.
@@ -394,6 +396,13 @@
         # Node exec disabled — clean up any stale node pin
         openclaw config unset tools.exec.node 2>/dev/null || true
         {% endif %}
+
+        # Skip bootstrap: prevent gateway from re-scaffolding workspace context files
+        # (SOUL.md, IDENTITY.md, etc.) with factory templates on every message/cron tick.
+        # Without this, Obsidian Sync conflict resolution can delete a file momentarily,
+        # and ensureAgentWorkspace() recreates it from template — causing a wipe loop.
+        # Day-0 safe: onboard runs before config role, so initial scaffold still happens.
+        check_set agents.defaults.skipBootstrap true
 
         # Sandbox configuration
         check_set agents.defaults.sandbox.mode "{{ openclaw_sandbox_mode }}"
@@ -432,8 +441,8 @@
         check_set_json tools.media.audio.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}"}]'
         {% endif %}
 
-        # Telegram: suppress notification sounds for error replies
-        check_set_json channels.telegram.silentErrorReplies 'true'
+        # Telegram: suppress error reply messages (silent = user sees nothing on failure)
+        check_set_json channels.telegram.silentErrorReplies '{{ openclaw_telegram_silent_error_replies | lower }}'
 
         # Health monitor: faster detection of silent channel disconnections
         check_set gateway.channelStaleEventThresholdMinutes "{{ openclaw_health_monitor_stale_minutes }}"

@@ -39,7 +39,7 @@ openclaw_custom_models:
           name: "Whisper-1"
           input: ["text"]
 nodejs_major_version: 25
-openclaw_version: "2026.3.31"
+openclaw_version: "2026.4.11"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -70,6 +70,7 @@ openclaw_compaction_memory_flush_prompt: >-
   Skip routine exchanges. If nothing worth storing: NO_FLUSH
 openclaw_compaction_memory_flush_system_prompt: >-
   Extract only durable facts worth remembering across sessions. Be selective.
+openclaw_compaction_notify_user: true   # show "Compacting context..." notice in chat (2026.4.2+)
 
 # Concurrency settings
 openclaw_max_concurrent: 8
@@ -99,6 +100,9 @@ openclaw_sandbox_docker_network: "bridge"
 openclaw_sandbox_docker_image: "openclaw-sandbox-custom:latest"
 openclaw_sandbox_read_only_root: false  # Allow runtime pip/npm/curl installs (see docs/SECURITY.md §4)
 openclaw_browser_allow_host_control: false  # Allow sandboxed agents to use browser tool with target="host"
+
+# Telegram: silently suppress error reply messages (true = user sees nothing on failure)
+openclaw_telegram_silent_error_replies: true
 
 # Health monitor: restart channels that go silent (no events) for this many minutes
 openclaw_health_monitor_stale_minutes: 15  # Default 30; lowered for faster disconnect detection
@@ -195,13 +199,13 @@ openclaw_mcp_adapter:
   codex_sandbox: "workspace-write"
   codex_approval: "never"
   codex_docker_image: "codex-mcp:latest"
-  codex_version: "0.116.0"       # Pin for reproducibility; update intentionally
+  codex_version: "0.118.0"       # Pin for reproducibility; update intentionally
   codex_memory_limit: "2g"       # Prevent runaway Codex from exhausting VPS RAM
   codex_proxy_port: 8787         # Port for the credential-injecting reverse proxy
   codex_oauth_client_id: "DRivsnm2Mu42T3KOpqdL9p3q9ByGaHfy"  # Codex OAuth client_id for token refresh (mcp-auth-proxy)
   # Claude Code settings
   claude_code_docker_image: "claude-code-mcp:latest"
-  claude_code_version: "2.1.81"     # Pin @anthropic-ai/claude-code CLI for reproducibility
+  claude_code_version: "2.1.97"     # Pin @anthropic-ai/claude-code CLI for reproducibility
   claude_code_mcp_version: "2.2.0"  # Pin @pandysp/claude-code-mcp server for reproducibility
   claude_code_memory_limit: "2g"    # Monitor and adjust — Claude Code may need more than Codex
   # Pi MCP settings
@@ -263,9 +267,5 @@ obsidian_headless_initial_sync_timeout: 300
 # Override in openclaw.yml to add workspace-specific exclusions.
 obsidian_headless_excluded_folders: ".git,.venv,node_modules,.cache,.env"
 
-# Obsidian vault definitions (cloned into <workspace>/obsidian/<name>/).
-# Default: none. Override in openclaw.yml for vault access.
-openclaw_obsidian_vaults: []
-# Note: openclaw_obsidian_github_tokens and openclaw_workspaces are now auto-generated
-# in playbook.yml pre_tasks from openclaw_agents. See _openclaw_obsidian_github_tokens
-# and _openclaw_workspaces. Override by defining these variables in openclaw.yml.
+# Note: openclaw_workspaces is auto-generated in playbook.yml pre_tasks from
+# openclaw_agents. Override by defining openclaw_workspaces in openclaw.yml.

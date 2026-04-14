@@ -1,0 +1,59 @@
+---
+# Install and authenticate the Claude CLI for the claude-cli backend.
+#
+# The claude CLI (@anthropic-ai/claude-code) is installed as a global npm
+# dependency of OpenClaw. This task ensures:
+#   1. The binary is accessible via /usr/local/bin/claude
+#   2. OAuth credentials are written to ~/.claude/.credentials.json
+#
+# Credentials (access + refresh tokens) are passed from Pulumi via provision.sh.
+# The claude CLI auto-refreshes the access token using the refresh token.
+
+- name: Check if claude CLI is available
+  ansible.builtin.stat:
+    path: /home/ubuntu/.npm-global/bin/claude
+  register: claude_cli_binary
+
+- name: Verify claude CLI works
+  ansible.builtin.command: claude --version
+  check_mode: false
+  register: claude_cli_version
+  changed_when: false
+  failed_when: claude_cli_version.rc != 0
+  environment:
+    PATH: "/home/ubuntu/.npm-global/bin:{{ ansible_facts['env']['PATH'] }}"
+  when: claude_cli_binary.stat.exists
+
+- name: Symlink claude to /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: /home/ubuntu/.npm-global/bin/claude
+    dest: /usr/local/bin/claude
+    state: link
+    force: true
+  when: claude_cli_binary.stat.exists
+
+- name: Create ~/.claude directory
+  ansible.builtin.file:
+    path: /home/ubuntu/.claude
+    state: directory
+    mode: "0700"
+
+- name: Write Claude CLI OAuth credentials
+  ansible.builtin.copy:
+    content: "{{ claude_oauth_credentials }}"
+    dest: /home/ubuntu/.claude/.credentials.json
+    mode: "0600"
+  no_log: true
+  when: claude_oauth_credentials | default('') | length > 0
+  notify: restart openclaw-gateway
+
+- name: Verify Claude CLI auth status
+  ansible.builtin.command: claude auth status
+  check_mode: false
+  register: claude_auth_check
+  changed_when: false
+  failed_when: "'loggedIn\": false' in claude_auth_check.stdout"
+  environment:
+    PATH: "/usr/local/bin:/home/ubuntu/.npm-global/bin:{{ ansible_facts['env']['PATH'] }}"
+  when: claude_oauth_credentials | default('') | length > 0

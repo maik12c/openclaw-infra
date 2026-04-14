@@ -66,8 +66,6 @@ const discordGuildId = config.get("discordGuildId");
 const discordUserId = config.get("discordUserId");
 const githubToken = config.getSecret("githubToken");
 const workspaceRepoUrl = config.get("workspaceRepoUrl");
-// Obsidian vault for main agent uses "Andy" (person name, not agent ID)
-const obsidianAndyVaultRepoUrl = config.get("obsidianAndyVaultRepoUrl");
 
 // ============================================
 // Per-agent config (derived from agentIds)
@@ -83,7 +81,6 @@ const agentConfig: Record<
         telegramGroupId: string | undefined;
         whatsappPhone: string | undefined;
         workspaceRepoUrl: string | undefined;
-        obsidianVaultRepoUrl: string | undefined;
     }
 > = {};
 
@@ -95,7 +92,6 @@ for (const id of agentIds) {
         telegramGroupId: config.get(`telegram${p}GroupId`),
         whatsappPhone: config.get(`whatsapp${p}Phone`),
         workspaceRepoUrl: config.get(`workspace${p}RepoUrl`),
-        obsidianVaultRepoUrl: config.get(`obsidian${p}VaultRepoUrl`),
     };
 }
 
@@ -171,7 +167,6 @@ const provisionEnv: Record<string, pulumi.Input<string>> = {
     PROVISION_GEMINI_API_KEY: geminiApiKey || "",
     PROVISION_OPENAI_API_KEY: openaiApiKey || "",
     PROVISION_GITHUB_TOKEN: githubToken || "",
-    PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL: obsidianAndyVaultRepoUrl || "",
     PROVISION_OBSIDIAN_AUTH_TOKEN: obsidianAuthToken || "",
     PROVISION_OBSIDIAN_VAULT_PASSWORD: obsidianVaultPassword || "",
     PROVISION_DISCORD_BOT_TOKEN: discordBotToken || "",
@@ -194,8 +189,6 @@ for (const id of agentIds) {
         cfg.workspaceRepoUrl || "";
     provisionEnv[`PROVISION_WORKSPACE_${upper}_DEPLOY_KEY`] =
         agentDeployKeys[id].privateKeyOpenssh;
-    provisionEnv[`PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL`] =
-        cfg.obsidianVaultRepoUrl || "";
 }
 
 const ansibleProvision = new command.local.Command(

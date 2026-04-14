@@ -101,7 +101,12 @@
     fi
     {% set groups_dict = {} %}
     {% for ga in group_agents %}
-    {%   set _ = groups_dict.update({ga.deliver_to: {"allowFrom": group_allow, "requireMention": false}}) %}
+    {%   if ga.group_allow_from is defined %}
+    {%     set ga_allow = ga.group_allow_from | map('int') | list %}
+    {%   else %}
+    {%     set ga_allow = group_allow %}
+    {%   endif %}
+    {%   set _ = groups_dict.update({ga.deliver_to: {"allowFrom": ga_allow, "requireMention": ga.group_require_mention | default(false)}}) %}
     {% endfor %}
     DESIRED_GROUPS='{{ groups_dict | to_json }}'
     CURRENT_GROUPS=$(openclaw config get channels.telegram.groups 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || CURRENT_GROUPS="{}"

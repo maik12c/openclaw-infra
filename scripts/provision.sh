@@ -64,7 +64,6 @@ else
     export PROVISION_GEMINI_API_KEY=$(pulumi config get geminiApiKey 2>/dev/null || echo "")
     export PROVISION_OPENAI_API_KEY=$(pulumi config get openaiApiKey 2>/dev/null || echo "")
     export PROVISION_GITHUB_TOKEN=$(pulumi config get githubToken 2>/dev/null || echo "")
-    export PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL=$(pulumi config get obsidianAndyVaultRepoUrl 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_AUTH_TOKEN=$(pulumi config get obsidianAuthToken 2>/dev/null || echo "")
     export PROVISION_OBSIDIAN_VAULT_PASSWORD=$(pulumi config get obsidianVaultPassword 2>/dev/null || echo "")
     export PROVISION_DISCORD_BOT_TOKEN=$(pulumi config get discordBotToken 2>/dev/null || echo "")
@@ -99,7 +98,6 @@ else
             _agent_key=$(pulumi stack output "workspace${_pascal}DeployPrivateKey" --show-secrets 2>/dev/null || echo "")
         fi
         export "PROVISION_WORKSPACE_${_upper}_DEPLOY_KEY=${_agent_key}"
-        export "PROVISION_OBSIDIAN_${_upper}_VAULT_REPO_URL=$(pulumi config get "obsidian${_pascal}VaultRepoUrl" 2>/dev/null || echo "")"
     done
 fi
 
@@ -160,7 +158,6 @@ echo "  groq_voice: $([ -n "$(read_env PROVISION_GROQ_API_KEY)" ] && echo "confi
 echo "  gemini_image: $([ -n "$(read_env PROVISION_GEMINI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  openai_api: $([ -n "$(read_env PROVISION_OPENAI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  github_mcp (main): $([ -n "$(read_env PROVISION_GITHUB_TOKEN)" ] && echo "configured" || echo "skipped")"
-echo "  obsidian (andy): $([ -n "$(read_env PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  obsidian_headless: $([ -n "$(read_env PROVISION_OBSIDIAN_AUTH_TOKEN)" ] && echo "configured" || echo "skipped")"
 if [ -n "$agent_ids_str" ]; then
     for id in "${agent_ids[@]}"; do
@@ -171,7 +168,6 @@ if [ -n "$agent_ids_str" ]; then
         [ -n "$(read_env "PROVISION_WHATSAPP_${upper}_PHONE")" ] && echo "  whatsapp_${id}: configured"
         echo "  workspace_sync ($id): $([ -n "$(read_env "PROVISION_WORKSPACE_${upper}_REPO_URL")" ] && echo "configured" || echo "skipped")"
         echo "  github_mcp ($id): $([ -n "$(read_env "PROVISION_GITHUB_TOKEN_${upper}")" ] && echo "configured" || echo "skipped")"
-        [ -n "$(read_env "PROVISION_OBSIDIAN_${upper}_VAULT_REPO_URL")" ] && echo "  obsidian ($id): configured"
     done
 fi
 
@@ -197,6 +193,7 @@ import json, sys, os
 static = [
     ('gateway_token', 'PROVISION_GATEWAY_TOKEN'),
     ('claude_setup_token', 'PROVISION_CLAUDE_SETUP_TOKEN'),
+    ('claude_oauth_credentials', 'PROVISION_CLAUDE_OAUTH_CREDENTIALS'),
     ('telegram_bot_token', 'PROVISION_TELEGRAM_BOT_TOKEN'),
     ('telegram_user_id', 'PROVISION_TELEGRAM_USER_ID'),
     ('telegram_group_id', 'PROVISION_TELEGRAM_GROUP_ID'),
@@ -206,7 +203,6 @@ static = [
     ('gemini_api_key', 'PROVISION_GEMINI_API_KEY'),
     ('openai_api_key', 'PROVISION_OPENAI_API_KEY'),
     ('github_token', 'PROVISION_GITHUB_TOKEN'),
-    ('obsidian_andy_vault_repo_url', 'PROVISION_OBSIDIAN_ANDY_VAULT_REPO_URL'),
     ('obsidian_auth_token', 'PROVISION_OBSIDIAN_AUTH_TOKEN'),
     ('obsidian_vault_password', 'PROVISION_OBSIDIAN_VAULT_PASSWORD'),
     ('discord_bot_token', 'PROVISION_DISCORD_BOT_TOKEN'),
@@ -230,7 +226,6 @@ with open(sys.argv[1], 'w') as f:
             (f'telegram_{aid}_group_id', f'PROVISION_TELEGRAM_{upper}_GROUP_ID'),
             (f'whatsapp_{aid}_phone', f'PROVISION_WHATSAPP_{upper}_PHONE'),
             (f'workspace_{aid}_repo_url', f'PROVISION_WORKSPACE_{upper}_REPO_URL'),
-            (f'obsidian_{aid}_vault_repo_url', f'PROVISION_OBSIDIAN_{upper}_VAULT_REPO_URL'),
         ]
         for yaml_key, env_var in per_agent:
             v = os.environ.get(env_var, '')
