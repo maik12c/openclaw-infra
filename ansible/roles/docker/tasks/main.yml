@@ -53,20 +53,3 @@
     name: codex-proxy-net
     driver: bridge
   become: false
-
-# Resolve bridge gateway IP here (Docker guaranteed installed).
-# Pre_tasks attempt this too but may get empty on fresh servers.
-- name: Resolve Docker bridge gateway IP
-  ansible.builtin.shell: |
-    docker network inspect bridge --format '{{ '{{' }}(index .IPAM.Config 0).Gateway{{ '}}' }}'
-  args:
-    executable: /bin/bash
-  register: docker_bridge_result
-  changed_when: false
-  become: false
-  when: beads_docker_bridge_gateway_ip | default('') == ''
-
-- name: Set Docker bridge gateway IP fact
-  ansible.builtin.set_fact:
-    beads_docker_bridge_gateway_ip: "{{ docker_bridge_result.stdout | trim }}"
-  when: beads_docker_bridge_gateway_ip | default('') == ''

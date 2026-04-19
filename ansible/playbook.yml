@@ -101,24 +101,6 @@
         label: "{{ item.agent_id }}"
       tags: [always]
 
-    # Docker bridge gateway IP — needed by ufw, openclaw, config, and workspace roles.
-    # On day-2 runs (Docker already installed), pre_tasks resolves it immediately.
-    # On fresh servers, Docker isn't installed yet — the docker role resolves it after install.
-    - name: Get Docker bridge gateway IP
-      ansible.builtin.shell: |
-        docker network inspect bridge --format '{{ '{{' }}(index .IPAM.Config 0).Gateway{{ '}}' }}'
-      args:
-        executable: /bin/bash
-      register: docker_bridge_result
-      changed_when: false
-      failed_when: false
-      tags: [always]
-
-    - name: Set Docker bridge gateway IP fact
-      ansible.builtin.set_fact:
-        beads_docker_bridge_gateway_ip: "{{ docker_bridge_result.stdout | default('') | trim }}"
-      tags: [always]
-
     # Tailscale WSS URL: used by telegram and post_tasks to route CLI commands through
     # Tailscale Serve instead of local loopback (broken in OpenClaw 2026.3.13).
     # See: https://github.com/openclaw/openclaw/issues/48167

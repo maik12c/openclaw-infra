@@ -109,7 +109,7 @@
 # obsidian_headless_agents:
 #   - "main"
 # # Override excluded folders (default: .git,.venv,node_modules,.cache,.env)
-# obsidian_headless_excluded_folders: ".git,.venv,node_modules,.cache,.env,.beads,.claude"
+# obsidian_headless_excluded_folders: ".git,.venv,node_modules,.cache,.env,.claude"
 
 # --- Advanced: manual overrides for auto-generated config ---
 # The following variables are normally auto-generated from openclaw_agents.
