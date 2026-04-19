@@ -408,8 +408,9 @@
         check_set_json agents.defaults.sandbox.docker.binds '["/home/ubuntu/.openclaw/media:/media:ro"]'
         check_set_json agents.defaults.sandbox.docker.dangerouslyAllowExternalBindSources 'true'
 
-        # Beads env vars are no longer injected. check_unset is idempotent: removes
-        # these if present, no-op once gone. Can be dropped in a future cleanup pass.
+        # Migration for forks that ran the pre-2026-04-19 Beads setup: strip the
+        # four BEADS_DOLT env vars from the openclaw sandbox config. Safe to delete
+        # after 2026-07-01 (give forks one quarter to pull + re-run the playbook).
         for key in agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_HOST \
                    agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT \
                    agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START \
