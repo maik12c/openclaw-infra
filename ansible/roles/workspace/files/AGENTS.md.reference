@@ -26,8 +26,7 @@ You wake up fresh each session. These files are your continuity:
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
-**Override:** `bd prime` advises using `bd remember` instead of MEMORY.md — ignore that.
-We do NOT use `bd remember`. MEMORY.md is your long-term hub. Daily logs go in `memory/YYYY-MM-DD.md`.
+MEMORY.md is your long-term hub. Daily logs go in `memory/YYYY-MM-DD.md`.
 Durable knowledge goes into notes under `notes/`, with a one-liner pointer in MEMORY.md.
 
 ### 🧠 MEMORY.md — Hub Pattern
@@ -110,14 +109,14 @@ Nested tags in YAML frontmatter (`tags` key):
 
 After session boot, before picking up new work:
 
-1. **Action Board:** Run `bd blocked` then `bd ready`. Triage together with your human.
+1. **Action Board:** Review `notes/todos/` and the **Open** sections of recent daily notes. Triage together with your human.
 2. **Process Daily Notes Inbox:** Daily notes (`memory/YYYY-MM-DD.md`) are temporary containers. Content flows out:
    - Strategic frameworks → relevant area under `notes/`
    - Technical deep-dives → topic notes in relevant folders
    - Project notes → appropriate `notes/` subfolder
    - Personal insights → `notes/growth/`
    - Ideas → `notes/ideas/`
-3. Create Beads issues for actionable items discovered during triage.
+3. Capture actionable items discovered during triage into `notes/todos/` (or the appropriate project tracker).
 4. Delete only: empty stubs, fully-extracted conversation dumps, confirmed-irrelevant ephemera.
 5. **When in doubt, extract rather than delete.**
 

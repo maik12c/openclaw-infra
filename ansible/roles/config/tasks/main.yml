@@ -408,15 +408,14 @@
         check_set_json agents.defaults.sandbox.docker.binds '["/home/ubuntu/.openclaw/media:/media:ro"]'
         check_set_json agents.defaults.sandbox.docker.dangerouslyAllowExternalBindSources 'true'
 
-        {% if beads_shared_server_enabled | default(false) %}
-        # Beads shared Dolt server: containers connect to host-side dolt sql-server via TCP
-        # Use check_set_json with quoted strings — openclaw config set auto-parses bare
-        # numbers (3308, 0, 1) as numeric types, but env vars must be strings.
-        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_HOST '"{{ beads_docker_bridge_gateway_ip }}"'
-        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT '"{{ beads_shared_server_port }}"'
-        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START '"0"'
-        check_set_json agents.defaults.sandbox.docker.env.BEADS_DOLT_SHARED_SERVER '"1"'
-        {% endif %}
+        # Beads env vars are no longer injected. check_unset is idempotent: removes
+        # these if present, no-op once gone. Can be dropped in a future cleanup pass.
+        for key in agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_HOST \
+                   agents.defaults.sandbox.docker.env.BEADS_DOLT_SERVER_PORT \
+                   agents.defaults.sandbox.docker.env.BEADS_DOLT_AUTO_START \
+                   agents.defaults.sandbox.docker.env.BEADS_DOLT_SHARED_SERVER; do
+            check_unset "$key"
+        done
 
         # Image generation model (Google Gemini — provider apiKey merged into models JSON above)
         {% if gemini_api_key is defined and gemini_api_key | length > 0 %}

@@ -1,0 +1,58 @@
+---
+# One-shot teardown for Beads/Dolt infrastructure (retired 2026-04-19).
+# Remove this include + file in a follow-up commit once the playbook has
+# run on all managed hosts — these tasks are idempotent but only useful once.
+
+- name: Check whether the shared Dolt systemd unit exists
+  ansible.builtin.stat:
+    path: /home/ubuntu/.config/systemd/user/dolt-beads-shared.service
+  register: _dolt_unit_stat
+
+- name: Stop and disable the shared Dolt systemd user service
+  ansible.builtin.systemd:
+    name: dolt-beads-shared
+    state: stopped
+    enabled: false
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/1000"
+  when: _dolt_unit_stat.stat.exists
+  failed_when: false
+
+- name: Remove the shared Dolt systemd unit file
+  ansible.builtin.file:
+    path: /home/ubuntu/.config/systemd/user/dolt-beads-shared.service
+    state: absent
+
+- name: Reload systemd user manager after unit removal
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/1000"
+  when: _dolt_unit_stat.stat.exists
+
+- name: Wipe the central Beads/Dolt data directory
+  ansible.builtin.file:
+    path: /home/ubuntu/.beads
+    state: absent
+
+- name: Remove per-workspace .beads/ directories
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Glob expansion is safe — only matches existing dirs.
+    rm -rf /home/ubuntu/.openclaw/workspace*/.beads
+    echo "OK"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Remove bd and dolt binaries
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - /usr/local/bin/bd
+    - /usr/local/bin/dolt
+    - /home/ubuntu/.local/bin/bd
