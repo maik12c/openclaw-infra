@@ -265,8 +265,10 @@ echo "14. Checking scheduled tasks..."
 CRON_LIST=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
     "openclaw cron list 2>&1" || echo "FAILED")
 
-CRON_COUNT=$(echo "$CRON_LIST" | grep -c "idle\|running" || echo "0")
-if [[ "$CRON_COUNT" -gt 0 ]]; then
+CRON_COUNT=$(echo "$CRON_LIST" | grep -c -E "idle|running" || true)
+if [[ "$CRON_LIST" == "FAILED" ]]; then
+    check_warn "Could not reach server to list cron jobs"
+elif [[ "$CRON_COUNT" -gt 0 ]]; then
     check_pass "$CRON_COUNT scheduled task(s) configured"
     echo "$CRON_LIST" | grep -E "idle|running" | sed 's/^/   /'
 else

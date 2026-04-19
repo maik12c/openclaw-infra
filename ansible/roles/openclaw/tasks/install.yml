@@ -71,6 +71,7 @@
         PATH: "/home/ubuntu/.npm-global/bin:{{ ansible_facts['env']['PATH'] }}"
 
     - name: Confirm installed version matches target
+      when: not ansible_check_mode
       ansible.builtin.assert:
         that:
           - (openclaw_post_install_version.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('')) == openclaw_version

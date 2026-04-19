@@ -1605,7 +1605,9 @@
 - name: Check current memorySearch state
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    RESULT=$(jq -r '.agents.defaults.memorySearch.enabled // "unset"' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "unset")
+    # jq's `//` treats `false` as "missing" and returns the RHS; a conditional
+    # lets us distinguish an explicit `false` from an absent key.
+    RESULT=$(jq -r '.agents.defaults.memorySearch.enabled | if . == null then "unset" else tostring end' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "unset")
     echo "$RESULT"
   args:
     executable: /bin/bash
