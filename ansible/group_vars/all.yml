@@ -31,7 +31,7 @@ openclaw_custom_models:
           contextWindow: 200000
           maxTokens: 128000
 nodejs_major_version: 25
-openclaw_version: "2026.4.11"
+openclaw_version: "2026.4.15"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
