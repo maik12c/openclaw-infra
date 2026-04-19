@@ -102,18 +102,19 @@ else
     exit 1
 fi
 
-# 3. Check Node.js version
+# 3. Check Node.js version (must be >= v22)
 echo ""
 echo "3. Checking Node.js version..."
 NODE_VERSION=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
     "node --version" 2>/dev/null || echo "")
 
-if [[ "$NODE_VERSION" == v22* ]]; then
-    check_pass "Node.js version: $NODE_VERSION"
-elif [[ -n "$NODE_VERSION" ]]; then
-    check_warn "Node.js version $NODE_VERSION (expected v22+)"
-else
+NODE_MAJOR=$(echo "$NODE_VERSION" | grep -oE '[0-9]+' | head -1)
+if [[ -z "$NODE_VERSION" ]]; then
     check_fail "Node.js not found or not accessible"
+elif [[ "${NODE_MAJOR:-0}" -ge 22 ]]; then
+    check_pass "Node.js version: $NODE_VERSION"
+else
+    check_warn "Node.js version $NODE_VERSION (expected v22+)"
 fi
 
 # 4. Check OpenClaw systemd user service
@@ -153,17 +154,17 @@ else
     check_warn "Gateway not responding (may still be starting)"
 fi
 
-# 7. Check expected ports on localhost
+# 7. Check gateway port on localhost (18789 is the only port openclaw binds)
 echo ""
 echo "7. Checking local ports on server..."
 PORTS_CHECK=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "ss -tlnp | grep -E ':(18789|18791|18793)'" 2>/dev/null || echo "")
+    "ss -tlnp | grep -E ':18789'" 2>/dev/null || echo "")
 
 if [[ -n "$PORTS_CHECK" ]]; then
-    check_pass "OpenClaw ports listening on localhost"
-    echo "   $PORTS_CHECK" | head -3
+    check_pass "OpenClaw gateway listening on localhost:18789"
+    echo "   $PORTS_CHECK" | head -2
 else
-    check_warn "Expected ports (18789, 18791, 18793) not found"
+    check_warn "Gateway port 18789 not found"
 fi
 
 # 8. Security audit: No public ports
@@ -229,39 +230,34 @@ else
     check_warn "Could not run security audit"
 fi
 
-# 12. Check Telegram channel (if configured)
+# 12. Channel status — one SSH call, parse once per channel
 echo ""
-echo "12. Checking Telegram channel..."
-TELEGRAM_STATUS=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
+echo "12. Checking configured channels..."
+CHANNELS_STATUS=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
     "openclaw channels status 2>&1" || echo "FAILED")
 
-if [[ "$TELEGRAM_STATUS" == *"Telegram"*"enabled"* ]]; then
-    check_pass "Telegram channel enabled and running"
-elif [[ "$TELEGRAM_STATUS" == *"Telegram"* ]]; then
-    check_warn "Telegram channel found but may not be running"
-    echo "$TELEGRAM_STATUS" | grep -i telegram | head -3 | sed 's/^/   /'
-else
-    echo "   Telegram not configured (optional)"
-fi
+check_channel() {
+    local name="$1"
+    local line
+    line=$(echo "$CHANNELS_STATUS" | grep -iE "^- $name" | head -1)
+    if [[ -z "$line" ]]; then
+        echo "   $name not configured (optional)"
+    elif [[ "$line" == *"enabled"* ]]; then
+        check_pass "$name channel enabled"
+        echo "$line" | sed 's/^/   /'
+    else
+        check_warn "$name channel present but not enabled"
+        echo "$line" | sed 's/^/   /'
+    fi
+}
 
-# 13. Check WhatsApp channel (if configured)
+check_channel "Telegram"
+check_channel "WhatsApp"
+check_channel "Discord"
+
+# 13. Check cron jobs
 echo ""
-echo "13. Checking WhatsApp channel..."
-WHATSAPP_STATUS=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw channels status 2>&1" || echo "FAILED")
-
-if [[ "$WHATSAPP_STATUS" == *"WhatsApp"*"enabled"* ]] || [[ "$WHATSAPP_STATUS" == *"whatsapp"*"enabled"* ]]; then
-    check_pass "WhatsApp channel enabled"
-elif [[ "$WHATSAPP_STATUS" == *"WhatsApp"* ]] || [[ "$WHATSAPP_STATUS" == *"whatsapp"* ]]; then
-    check_warn "WhatsApp channel found but may need QR scan"
-    echo "$WHATSAPP_STATUS" | grep -i whatsapp | head -3 | sed 's/^/   /'
-else
-    echo "   WhatsApp not configured (optional)"
-fi
-
-# 14. Check cron jobs
-echo ""
-echo "14. Checking scheduled tasks..."
+echo "13. Checking scheduled tasks..."
 CRON_LIST=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
     "openclaw cron list 2>&1" || echo "FAILED")
 
@@ -275,7 +271,7 @@ else
     echo "   No cron jobs configured (optional)"
 fi
 
-# 15. Check local gateway token (Mac client only)
+# 14. Check local gateway token (Mac client only)
 LOCAL_CONFIG="$HOME/.openclaw/openclaw.json"
 TOKEN_LEN=$(OPENCLAW_CONFIG="$LOCAL_CONFIG" python3 -c "
 import json, os
@@ -284,15 +280,36 @@ with open(os.environ['OPENCLAW_CONFIG']) as f:
 print(len(d.get('gateway', {}).get('remote', {}).get('token', '')))" || echo "0")
 if [ "$TOKEN_LEN" -gt 0 ] 2>/dev/null; then
     echo ""
-    echo "15. Checking local gateway token..."
+    echo "14. Checking local gateway token..."
     check_pass "Local gateway.remote.token is set"
 elif [ -f "$LOCAL_CONFIG" ]; then
     # Non-fatal: verify continues to report all checks
     echo ""
-    echo "15. Checking local gateway token..."
+    echo "14. Checking local gateway token..."
     check_fail "Local gateway.remote.token is EMPTY — node host cannot authenticate"
     echo "   Fix: run ./scripts/setup-mac-node.sh or restore from backup:"
     echo "   cat ~/.openclaw/openclaw.json.bak | python3 -c \"import json,sys; print(json.load(sys.stdin)['gateway']['remote']['token'])\""
+fi
+
+# 15. Version match — IaC pin vs installed. Catches drift across VPS, local CLI,
+# and the Mac node host: these three must stay in lockstep to avoid protocol
+# mismatches after a skipped upgrade.
+echo ""
+echo "15. Checking version alignment (IaC pin vs installed)..."
+IAC_VERSION=$(grep -E '^openclaw_version:' "$(dirname "${BASH_SOURCE[0]}")/../ansible/group_vars/all.yml" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+VPS_VERSION=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" 'openclaw --version' 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+LOCAL_VERSION=$(openclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+
+if [[ -z "$IAC_VERSION" ]]; then
+    check_warn "Could not read openclaw_version from ansible/group_vars/all.yml"
+elif [[ -z "$VPS_VERSION" ]]; then
+    check_warn "Could not query VPS openclaw version"
+elif [[ "$VPS_VERSION" != "$IAC_VERSION" ]]; then
+    check_fail "VPS on $VPS_VERSION but IaC pins $IAC_VERSION — run ./scripts/provision.sh --tags openclaw"
+elif [[ -n "$LOCAL_VERSION" ]] && [[ "$LOCAL_VERSION" != "$IAC_VERSION" ]]; then
+    check_warn "Local CLI on $LOCAL_VERSION but VPS/IaC on $IAC_VERSION — brew upgrade openclaw-cli"
+else
+    check_pass "All components on $IAC_VERSION (IaC=$IAC_VERSION, VPS=$VPS_VERSION, local=${LOCAL_VERSION:-n/a})"
 fi
 
 echo ""
