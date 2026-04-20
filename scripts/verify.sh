@@ -167,65 +167,95 @@ else
     check_warn "Gateway port 18789 not found"
 fi
 
-# 8. Security audit: No public ports
+# 8. Security audit: no public ports
+# Force IPv4 for the scan — BSD nc on macOS ignores -w for IPv6 and hangs
+# indefinitely on unreachable addresses. The Hetzner cloud firewall applies
+# uniformly to v4 and v6, so scanning v4 is sufficient to confirm the intent.
 echo ""
 echo "8. Security audit: Checking for exposed ports..."
 PUBLIC_IP=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "curl -s ifconfig.me" 2>/dev/null || echo "UNKNOWN")
+    "curl -s --ipv4 --max-time 5 ifconfig.me" 2>/dev/null || echo "UNKNOWN")
 
-if [ "$PUBLIC_IP" != "UNKNOWN" ]; then
-    echo "   Server public IP: $PUBLIC_IP"
-
-    # Check common ports from external
+if [ "$PUBLIC_IP" != "UNKNOWN" ] && [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "   Server public IPv4: $PUBLIC_IP"
+    # Python-based scan: BSD nc's -w timeout is unreliable against silently
+    # dropped packets (Hetzner firewall drops without RST, so SYN_SENT
+    # never resolves). socket.settimeout is deterministic.
     for PORT in 22 80 443 8080 18789; do
-        if nc -z -w 2 "$PUBLIC_IP" "$PORT" 2>/dev/null; then
+        RESULT=$(python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(2)
+try:
+    s.connect(('$PUBLIC_IP', $PORT))
+    print('open')
+except Exception:
+    print('closed')
+finally:
+    s.close()
+" 2>/dev/null)
+        if [[ "$RESULT" == "open" ]]; then
             check_fail "Port $PORT is publicly accessible!"
         else
             check_pass "Port $PORT is blocked (good)"
         fi
     done
 else
-    check_warn "Could not determine public IP"
+    check_warn "Could not determine server public IPv4 (got: ${PUBLIC_IP})"
 fi
 
 # 9. OpenClaw built-in status
+# Server-side timeout guards against openclaw status hanging during config
+# hot-reload or MCP bootstrap (observed taking >2min on some invocations).
 echo ""
 echo "9. Checking OpenClaw status..."
 OPENCLAW_STATUS=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw status 2>&1" || echo "FAILED")
+    "timeout 60 openclaw status 2>&1" || echo "FAILED")
 
-if [[ "$OPENCLAW_STATUS" != "FAILED" ]] && [[ "$OPENCLAW_STATUS" != "" ]]; then
-    check_pass "OpenClaw status OK"
-    echo "$OPENCLAW_STATUS" | head -10 | sed 's/^/   /'
+if [[ "$OPENCLAW_STATUS" == "FAILED" ]] || [[ -z "$OPENCLAW_STATUS" ]]; then
+    check_warn "Could not get OpenClaw status (timed out or unreachable)"
+elif echo "$OPENCLAW_STATUS" | grep -qE "Gateway service\s+.*running"; then
+    check_pass "OpenClaw status OK (gateway service running)"
+    echo "$OPENCLAW_STATUS" | grep -E "^│ (Gateway|Agents|Update|Channel) " | head -5 | sed 's/^/   /'
 else
-    check_warn "Could not get OpenClaw status"
+    check_warn "OpenClaw status returned but gateway service marker missing"
+    echo "$OPENCLAW_STATUS" | head -8 | sed 's/^/   /'
 fi
 
 # 10. OpenClaw health check
+# Look for negative signals rather than just non-empty output. A channel line
+# reading "Discord: error" would pass a non-empty check but indicates a problem.
 echo ""
 echo "10. Checking OpenClaw health..."
 OPENCLAW_HEALTH=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw health 2>&1" || echo "FAILED")
+    "timeout 60 openclaw health 2>&1" || echo "FAILED")
 
-if [[ "$OPENCLAW_HEALTH" != "FAILED" ]] && [[ "$OPENCLAW_HEALTH" != "" ]]; then
+if [[ "$OPENCLAW_HEALTH" == "FAILED" ]] || [[ -z "$OPENCLAW_HEALTH" ]]; then
+    check_warn "Could not get OpenClaw health"
+elif echo "$OPENCLAW_HEALTH" | grep -qiE ":\s*(error|offline|expired|disconnected|failed)"; then
+    check_fail "OpenClaw health reports a failing channel/agent"
+    echo "$OPENCLAW_HEALTH" | grep -iE ":\s*(error|offline|expired|disconnected|failed)" | sed 's/^/   /'
+else
     check_pass "OpenClaw health OK"
     echo "$OPENCLAW_HEALTH" | head -10 | sed 's/^/   /'
-else
-    check_warn "Could not get OpenClaw health"
 fi
 
 # 11. OpenClaw security audit
 echo ""
 echo "11. Running OpenClaw security audit..."
 SECURITY_AUDIT=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw security audit --deep 2>&1" || echo "FAILED")
+    "timeout 180 openclaw security audit --deep 2>&1" || echo "FAILED")
 
-if [[ "$SECURITY_AUDIT" == *"0 critical"* ]]; then
+# The audit summary line reads e.g. "Summary: 0 critical · 3 warn · 2 info".
+# Grep for it rather than tail -3, which otherwise shows the last finding body
+# and hides the counts that actually matter.
+SUMMARY_LINE=$(echo "$SECURITY_AUDIT" | grep -E "^Summary:" | head -1)
+if [[ "$SUMMARY_LINE" == *"0 critical"* ]]; then
     check_pass "Security audit passed"
-    echo "$SECURITY_AUDIT" | tail -3 | sed 's/^/   /'
+    [[ -n "$SUMMARY_LINE" ]] && echo "   $SUMMARY_LINE"
 elif [[ "$SECURITY_AUDIT" != "FAILED" ]]; then
-    check_warn "Security audit returned findings"
-    echo "$SECURITY_AUDIT" | tail -5 | sed 's/^/   /'
+    check_warn "Security audit returned critical findings"
+    [[ -n "$SUMMARY_LINE" ]] && echo "   $SUMMARY_LINE"
 else
     check_warn "Could not run security audit"
 fi
@@ -234,7 +264,7 @@ fi
 echo ""
 echo "12. Checking configured channels..."
 CHANNELS_STATUS=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw channels status 2>&1" || echo "FAILED")
+    "timeout 60 openclaw channels status 2>&1" || echo "FAILED")
 
 check_channel() {
     local name="$1"
@@ -259,14 +289,17 @@ check_channel "Discord"
 echo ""
 echo "13. Checking scheduled tasks..."
 CRON_LIST=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "ubuntu@$FULL_HOSTNAME" \
-    "openclaw cron list 2>&1" || echo "FAILED")
+    "timeout 60 openclaw cron list 2>&1" || echo "FAILED")
 
-CRON_COUNT=$(echo "$CRON_LIST" | grep -c -E "idle|running" || true)
+# Each cron job row starts with a UUID. Matching on status (idle|running|ok)
+# was fragile and missed jobs whose status doesn't happen to fall in that set;
+# UUID prefix matches every job regardless of current state.
+CRON_COUNT=$(echo "$CRON_LIST" | grep -c -E '^[0-9a-f]{8}-[0-9a-f]{4}-' || true)
 if [[ "$CRON_LIST" == "FAILED" ]]; then
     check_warn "Could not reach server to list cron jobs"
 elif [[ "$CRON_COUNT" -gt 0 ]]; then
     check_pass "$CRON_COUNT scheduled task(s) configured"
-    echo "$CRON_LIST" | grep -E "idle|running" | sed 's/^/   /'
+    echo "$CRON_LIST" | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-' | sed 's/^/   /' | head -5
 else
     echo "   No cron jobs configured (optional)"
 fi
