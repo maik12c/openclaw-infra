@@ -1,0 +1,52 @@
+# Fast pre-merge validation: parse-checks run on every PR and push.
+#
+# Regression history: PR #15 shipped a YAML comment with an unbalanced
+# apostrophe that Ansible's Jinja2 pre-parser rejected. A bare
+# --syntax-check would have blocked the merge in seconds.
+#
+# No secrets, no Pulumi, no Tailscale, no VPS. Should complete in under
+# a minute so it never becomes the bottleneck on a PR.
+
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ansible-syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+        working-directory: ansible
+
+      - name: Syntax-check playbook
+        run: ansible-playbook --syntax-check -i localhost, playbook.yml
+        working-directory: ansible
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        # -S error blocks only on syntax breaks, not on pre-existing style
+        # warnings (many SC2155 exist across the codebase today). Tightening
+        # the severity later is a follow-up once those are cleaned up.
+        run: shellcheck -S error scripts/*.sh

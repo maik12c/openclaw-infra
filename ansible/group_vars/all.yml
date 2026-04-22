@@ -39,7 +39,7 @@ openclaw_custom_models:
           name: "Whisper-1"
           input: ["text"]
 nodejs_major_version: 25
-openclaw_version: "2026.4.11"
+openclaw_version: "2026.4.15"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -107,16 +107,6 @@ openclaw_telegram_silent_error_replies: true
 # Health monitor: restart channels that go silent (no events) for this many minutes
 openclaw_health_monitor_stale_minutes: 15  # Default 30; lowered for faster disconnect detection
 
-# beads (bd) — AI-native issue tracker (https://github.com/steveyegge/beads)
-# v0.56.0+ removed embedded Dolt; requires `dolt` binary on PATH.
-# Shared-server mode (v0.60.0+): single host-side `dolt sql-server` via systemd,
-# containers connect via TCP through Docker bridge gateway. No per-workspace servers.
-beads_version: "0.62.0"
-dolt_version: "1.83.6"
-beads_shared_server_enabled: true
-beads_shared_server_port: 3308
-beads_shared_server_memory_max: "2G"
-
 # Force sandbox image rebuild (override with -e force_sandbox_rebuild=true)
 force_sandbox_rebuild: false
 
@@ -153,9 +143,6 @@ qmd_collections:
   - name: extracted-content
     path: ".scripts/extract-cache"
     pattern: "*.json"
-  - name: beads
-    path: ".beads/qmd-export"
-    pattern: "*.md"
 
 # Agent definitions — single-agent default for new deployments.
 # Override in openclaw.yml for multi-agent setups (see openclaw.yml.example).
