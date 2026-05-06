@@ -37,7 +37,7 @@ openclaw_custom_models:
           maxTokens: 4096
         - id: "whisper-1"
           name: "Whisper-1"
-          input: ["text"]
+          input: ["audio"]
 nodejs_major_version: 25
 openclaw_version: "2026.4.15"
 openclaw_heartbeat_interval: "30m"
@@ -50,6 +50,13 @@ openclaw_elevated_default: "off"
 # NOTE: api: "openai-responses" breaks audio — omits model param → HTTP 400.
 openclaw_audio_provider: "openai"
 openclaw_audio_model: "whisper-1"
+
+# Voice output (text-to-speech)
+# auto: "inbound" = Agent antwortet mit Sprache nur wenn Nutzer Sprachnachricht schickt
+# auto: "always"  = Agent antwortet immer mit Sprache
+# auto: "off"     = kein TTS
+openclaw_tts_provider: "openai"   # nutzt bestehenden openaiApiKey; ~$0.015/1000 Zeichen
+openclaw_tts_auto: "inbound"      # Voice reply only when user sends voice message
 
 # Image generation (Google Gemini)
 # Set via: pulumi config set geminiApiKey --secret
@@ -182,6 +189,10 @@ openclaw_mcp_adapter:
     - "@modelcontextprotocol/server-github"
     - "@openai/codex"
     - "node-exec-mcp"
+    - "@gongrzhe/server-gmail-autoauth-mcp"
+    - "@modelcontextprotocol/server-gdrive"
+    - "mcp-google-calendar"
+    - "google-contacts-mcp"
   tool_prefix: true
   codex_sandbox: "workspace-write"
   codex_approval: "never"
@@ -201,6 +212,46 @@ openclaw_mcp_adapter:
   pi_mcp_memory_limit: "1g"    # Lower than Codex/Claude Code — Pi is lighter (session trees, not full IDE)
   pi_mcp_model: "claude-opus-4-6"
   pi_mcp_thinking: "xhigh"
+  # contracts.tools: tool names declared in openclaw.plugin.json so OpenClaw >=2026.5.x
+  # includes adapter tools in agent bundles (resolvePluginToolRuntimePluginIds).
+  # github/qmd/pi/claude-code tools load via descriptor cache and don't need this.
+  # Update when adding new MCP server types.
+  contract_tools:
+    - codex_codex
+    - codex_codex-reply
+    - gmail_send_email
+    - gmail_draft_email
+    - gmail_read_email
+    - gmail_search_emails
+    - gmail_modify_email
+    - gmail_delete_email
+    - gmail_list_email_labels
+    - gmail_batch_modify_emails
+    - gmail_batch_delete_emails
+    - gmail_create_label
+    - gmail_update_label
+    - gmail_delete_label
+    - gmail_get_or_create_label
+    - gmail_create_filter
+    - gmail_list_filters
+    - gmail_get_filter
+    - gmail_delete_filter
+    - gmail_create_filter_from_template
+    - gmail_download_attachment
+    - gdrive_search
+    - gcal_list_calendars
+    - gcal_list_calendar_events
+    - gcal_create_calendar_event
+    - gcal_get_calendar_event
+    - gcal_edit_calendar_event
+    - gcal_delete_calendar_event
+    - gcontacts_contacts_list
+    - gcontacts_contact_get
+    - gcontacts_contact_search
+    - gcontacts_contact_create
+    - gcontacts_contact_update
+    - gcontacts_contact_delete
+    - gcontacts_directory_search
   # Note: MCP servers are auto-generated from openclaw_agents × openclaw_mcp_server_types
   # in playbook.yml pre_tasks. The 'servers' key was removed — see _openclaw_mcp_servers.
 
@@ -220,6 +271,14 @@ openclaw_mcp_server_types:
     name_prefix: "qmd"
   - type: "node-exec"
     name_prefix: "mac"
+  - type: "gmail"
+    name_prefix: "gmail"
+  - type: "gdrive"
+    name_prefix: "gdrive"
+  - type: "gcal"
+    name_prefix: "gcal"
+  - type: "gcontacts"
+    name_prefix: "gcontacts"
 
 # Claude Code plugins for MCP containers
 claude_code_plugins:

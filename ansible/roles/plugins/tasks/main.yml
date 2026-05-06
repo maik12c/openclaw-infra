@@ -6,7 +6,7 @@
 
 - name: Check if mcp-adapter plugin directory exists
   ansible.builtin.stat:
-    path: /home/ubuntu/.openclaw/extensions/openclaw-mcp-adapter/index.ts
+    path: /home/ubuntu/.openclaw/npm/node_modules/@pandysp/openclaw-mcp-adapter/dist/index.js
   register: plugin_dir
 
 - name: Save existing MCP adapter config before potential reinstall
@@ -55,7 +55,7 @@
 
     - name: Remove existing plugin directory (reinstall)
       ansible.builtin.file:
-        path: /home/ubuntu/.openclaw/extensions/openclaw-mcp-adapter
+        path: /home/ubuntu/.openclaw/npm/node_modules/@pandysp/openclaw-mcp-adapter
         state: absent
       when: force_plugin_reinstall | bool
 
@@ -66,6 +66,124 @@
         openclaw plugins install --pin "{{ openclaw_mcp_adapter.npm_package }}"
       args:
         executable: /bin/bash
+
+    - name: Patch adapter manifest — add activation.onStartup=true (required for OpenClaw >=2026.5.x)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+        if [ -z "$MANIFEST" ]; then
+          echo "SKIP: manifest not found"
+          exit 0
+        fi
+        python3 -c "
+        import json, sys
+        path = sys.argv[1]
+        m = json.load(open(path))
+        if m.get('activation', {}).get('onStartup') is True:
+            print('OK')
+            sys.exit(0)
+        m['activation'] = {'onStartup': True}
+        with open(path, 'w') as f:
+            json.dump(m, f, indent=2)
+        print('PATCHED')
+        " "$MANIFEST"
+      args:
+        executable: /bin/bash
+      register: manifest_patch
+      changed_when: "'PATCHED' in manifest_patch.stdout"
+
+    - name: Patch adapter manifest — add contracts.tools (required for OpenClaw >=2026.5.x tool resolution)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+        if [ -z "$MANIFEST" ]; then echo "SKIP: manifest not found"; exit 0; fi
+        python3 -c "
+        import json, sys, os
+        path = sys.argv[1]
+        desired = json.loads(os.environ['CONTRACTS'])
+        m = json.load(open(path))
+        current = m.get('contracts', {}).get('tools', [])
+        if sorted(current) == sorted(desired):
+            print('OK')
+            sys.exit(0)
+        m.setdefault('contracts', {})['tools'] = desired
+        with open(path, 'w') as f:
+            json.dump(m, f, indent=2)
+        print('PATCHED')
+        " "$MANIFEST"
+      environment:
+        CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
+      args:
+        executable: /bin/bash
+      register: manifest_contracts_patch
+      changed_when: "'PATCHED' in manifest_contracts_patch.stdout"
+
+    - name: Patch adapter dist/index.js — factory form registration (required for OpenClaw >=2026.5.x)
+      # openclaw-mcp-adapter v0.1.6 uses api.registerTool(object) which bypasses OpenClaw's
+      # runtime plugin registry. Factory form api.registerTool(factory, { names: [...] }) is
+      # required so resolvePluginToolRuntimePluginIds can match contract tool names to the plugin.
+      ansible.builtin.shell: |
+        set -euo pipefail
+        JS=$(find /home/ubuntu/.openclaw/npm/node_modules -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
+        if [ -z "$JS" ]; then echo "SKIP: dist/index.js not found"; exit 0; fi
+        python3 - "$JS" << 'PYEOF'
+        import sys, shutil
+        path = sys.argv[1]
+        with open(path) as f:
+            content = f.read()
+        if '{ names: [toolName] }' in content:
+            print('OK')
+            sys.exit(0)
+        if 'api.registerTool({' not in content:
+            print('SKIP: original form not found')
+            sys.exit(0)
+        shutil.copy2(path, path + '.bak.ansible')
+        OLD1 = ('                api.registerTool({\n'
+                '                    name: toolName,\n'
+                '                    description: tool.description ?? `Tool from ${server.name}`,\n'
+                '                    parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+                '                    async execute(_id, params) {')
+        NEW1 = ('                api.registerTool((_ctx) => ({\n'
+                '                    name: toolName,\n'
+                '                    description: tool.description ?? `Tool from ${server.name}`,\n'
+                '                    parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+                '                    execute: async (_id, params) => {')
+        OLD1C = ('                    },\n'
+                 '                });\n'
+                 '                registered++;')
+        NEW1C = ('                    },\n'
+                 '                }), { names: [toolName] });\n'
+                 '                registered++;')
+        OLD2 = ('                            api.registerTool({\n'
+                '                                name: toolName,\n'
+                '                                description: tool.description ?? `Tool from ${server.name}`,\n'
+                '                                parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+                '                                async execute(_id, params) {')
+        NEW2 = ('                            api.registerTool((_ctx) => ({\n'
+                '                                name: toolName,\n'
+                '                                description: tool.description ?? `Tool from ${server.name}`,\n'
+                '                                parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+                '                                execute: async (_id, params) => {')
+        OLD2C = ('                                },\n'
+                 '                            });\n'
+                 '                            console.log(`[mcp-adapter] Registered: ${toolName}`);')
+        NEW2C = ('                                },\n'
+                 '                            }), { names: [toolName] });\n'
+                 '                            console.log(`[mcp-adapter] Registered: ${toolName}`);')
+        for old, new in [(OLD1, NEW1), (OLD1C, NEW1C), (OLD2, NEW2), (OLD2C, NEW2C)]:
+            if old not in content:
+                print('FAIL: patch target not found:', repr(old[:50]))
+                sys.exit(1)
+            content = content.replace(old, new, 1)
+        with open(path, 'w') as f:
+            f.write(content)
+        print('PATCHED')
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: adapter_js_patch
+      changed_when: "'PATCHED' in adapter_js_patch.stdout"
+      failed_when: "'FAIL' in adapter_js_patch.stdout"
 
     - name: Restore MCP adapter config after reinstall
       ansible.builtin.shell: |
@@ -97,9 +215,14 @@
             allow.append('openclaw-mcp-adapter')
             changed = True
 
-        # tools.sandbox.tools.allow
+        # tools.sandbox.tools.allow — individual tool names required for OpenClaw >=2026.5.x.
+        # 'openclaw-mcp-adapter' is not a valid tool-name lookup; explicit names must be listed.
         tool_allow = cfg.setdefault('tools', {}).setdefault('sandbox', {}).setdefault('tools', {}).setdefault('allow', [])
-        for entry in ['group:plugins', 'openclaw-mcp-adapter']:
+        if 'openclaw-mcp-adapter' in tool_allow:
+            tool_allow.remove('openclaw-mcp-adapter')
+            changed = True
+        contract_tools = json.loads(os.environ['CONTRACTS'])
+        for entry in ['group:plugins'] + contract_tools:
             if entry not in tool_allow:
                 tool_allow.append(entry)
                 changed = True
@@ -117,10 +240,127 @@
         else:
             print('OK')
         "
+      environment:
+        CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
       args:
         executable: /bin/bash
       register: allowlist_result
       changed_when: "'ADDED' in allowlist_result.stdout"
+
+- name: Ensure adapter manifest has activation.onStartup=true (idempotent, covers existing installs)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+    if [ -z "$MANIFEST" ]; then
+      echo "SKIP"
+      exit 0
+    fi
+    python3 -c "
+    import json, sys
+    path = sys.argv[1]
+    m = json.load(open(path))
+    if m.get('activation', {}).get('onStartup') is True:
+        print('OK')
+        sys.exit(0)
+    m['activation'] = {'onStartup': True}
+    with open(path, 'w') as f:
+        json.dump(m, f, indent=2)
+    print('PATCHED')
+    " "$MANIFEST"
+  args:
+    executable: /bin/bash
+  register: manifest_patch_idempotent
+  changed_when: "'PATCHED' in manifest_patch_idempotent.stdout"
+
+- name: Ensure adapter manifest has contracts.tools (idempotent, covers existing installs)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+    if [ -z "$MANIFEST" ]; then echo "SKIP"; exit 0; fi
+    python3 -c "
+    import json, sys, os
+    path = sys.argv[1]
+    desired = json.loads(os.environ['CONTRACTS'])
+    m = json.load(open(path))
+    current = m.get('contracts', {}).get('tools', [])
+    if sorted(current) == sorted(desired):
+        print('OK')
+        sys.exit(0)
+    m.setdefault('contracts', {})['tools'] = desired
+    with open(path, 'w') as f:
+        json.dump(m, f, indent=2)
+    print('PATCHED')
+    " "$MANIFEST"
+  environment:
+    CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
+  args:
+    executable: /bin/bash
+  register: manifest_contracts_idempotent
+  changed_when: "'PATCHED' in manifest_contracts_idempotent.stdout"
+
+- name: Ensure adapter dist/index.js uses factory form registration (idempotent, covers existing installs)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    JS=$(find /home/ubuntu/.openclaw/npm/node_modules -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
+    if [ -z "$JS" ]; then echo "SKIP"; exit 0; fi
+    python3 - "$JS" << 'PYEOF'
+    import sys, shutil
+    path = sys.argv[1]
+    with open(path) as f:
+        content = f.read()
+    if '{ names: [toolName] }' in content:
+        print('OK')
+        sys.exit(0)
+    if 'api.registerTool({' not in content:
+        print('SKIP: original form not found')
+        sys.exit(0)
+    shutil.copy2(path, path + '.bak.ansible')
+    OLD1 = ('                api.registerTool({\n'
+            '                    name: toolName,\n'
+            '                    description: tool.description ?? `Tool from ${server.name}`,\n'
+            '                    parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+            '                    async execute(_id, params) {')
+    NEW1 = ('                api.registerTool((_ctx) => ({\n'
+            '                    name: toolName,\n'
+            '                    description: tool.description ?? `Tool from ${server.name}`,\n'
+            '                    parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+            '                    execute: async (_id, params) => {')
+    OLD1C = ('                    },\n'
+             '                });\n'
+             '                registered++;')
+    NEW1C = ('                    },\n'
+             '                }), { names: [toolName] });\n'
+             '                registered++;')
+    OLD2 = ('                            api.registerTool({\n'
+            '                                name: toolName,\n'
+            '                                description: tool.description ?? `Tool from ${server.name}`,\n'
+            '                                parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+            '                                async execute(_id, params) {')
+    NEW2 = ('                            api.registerTool((_ctx) => ({\n'
+            '                                name: toolName,\n'
+            '                                description: tool.description ?? `Tool from ${server.name}`,\n'
+            '                                parameters: tool.inputSchema ?? { type: "object", properties: {} },\n'
+            '                                execute: async (_id, params) => {')
+    OLD2C = ('                                },\n'
+             '                            });\n'
+             '                            console.log(`[mcp-adapter] Registered: ${toolName}`);')
+    NEW2C = ('                                },\n'
+             '                            }), { names: [toolName] });\n'
+             '                            console.log(`[mcp-adapter] Registered: ${toolName}`);')
+    for old, new in [(OLD1, NEW1), (OLD1C, NEW1C), (OLD2, NEW2), (OLD2C, NEW2C)]:
+        if old not in content:
+            print('FAIL: patch target not found:', repr(old[:50]))
+            sys.exit(1)
+        content = content.replace(old, new, 1)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('PATCHED')
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: adapter_js_idempotent
+  changed_when: "'PATCHED' in adapter_js_idempotent.stdout"
+  failed_when: "'FAIL' in adapter_js_idempotent.stdout"
 
 - name: Ensure npm global prefix is configured
   ansible.builtin.shell: |
@@ -160,6 +400,80 @@
   environment:
     PATH: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin:{{ ansible_facts['env']['PATH'] }}"
   loop: "{{ mcp_npm_packages }}"
+
+- name: Patch mcp-google-calendar to support timed events (dateTime + timeZone)
+  # mcp-google-calendar v0.0.5 hardcodes { date: event.start } which forces all-day events.
+  # This patch adds conditional dateTime/date logic and exposes timeZone in the schema.
+  # Applied after every npm install to survive package reinstalls.
+  # Backups kept at schemas.js.bak and google-calendar.js.bak for reference.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    SCHEMAS="{{ npm_prefix_bin }}/../lib/node_modules/mcp-google-calendar/dist/tools/schemas.js"
+    SERVICE="{{ npm_prefix_bin }}/../lib/node_modules/mcp-google-calendar/dist/services/google-calendar.js"
+
+    # Only patch if the original (unpatched) date-only strings are present
+    if grep -q 'Format: YYYY-MM-DD"' "$SCHEMAS" 2>/dev/null; then
+      cp "$SCHEMAS" "${SCHEMAS}.bak"
+      python3 - "$SCHEMAS" << 'PYEOF'
+    import sys
+    path = sys.argv[1]
+    with open(path) as f: content = f.read()
+    old = ('start: z.string().describe("The start date of the event. Format: YYYY-MM-DD"),\n'
+           '    end: z.string().describe("The end date of the event. Format: YYYY-MM-DD"),')
+    new = ('start: z.string().describe("Event start. All-day: YYYY-MM-DD (e.g. 2026-04-17). Timed: YYYY-MM-DDTHH:MM:SS (e.g. 2026-04-17T14:00:00). Use timeZone for local time."),\n'
+           '    end: z.string().describe("Event end. All-day: YYYY-MM-DD. Timed: YYYY-MM-DDTHH:MM:SS (e.g. 2026-04-17T15:30:00). Use timeZone for local time."),\n'
+           '    timeZone: z.string().optional().describe("IANA timezone for timed events, e.g. Europe/Berlin. Required when start/end contain a time component."),')
+    if old not in content: raise SystemExit("schemas.js patch target not found")
+    with open(path, "w") as f: f.write(content.replace(old, new))
+    print("schemas.js patched")
+    PYEOF
+      echo "schemas.js patch applied"
+    else
+      echo "schemas.js already patched, skipping"
+    fi
+
+    if grep -q '{ date: event.start }' "$SERVICE" 2>/dev/null; then
+      cp "$SERVICE" "${SERVICE}.bak"
+      python3 - "$SERVICE" << 'PYEOF'
+    import sys
+    path = sys.argv[1]
+    with open(path) as f: content = f.read()
+    old_create = ('                start: { date: event.start },\n'
+                  '                end: { date: event.end },\n'
+                  '                anyoneCanAddSelf: event.anyoneCanAddSelf,\n'
+                  '                colorId: event.colorId,\n'
+                  '            },\n        });\n        return res.data;\n    }\n    async getEvent')
+    new_create = ('                start: event.start.includes("T") ? { dateTime: event.start, timeZone: event.timeZone || "UTC" } : { date: event.start },\n'
+                  '                end: event.end.includes("T") ? { dateTime: event.end, timeZone: event.timeZone || "UTC" } : { date: event.end },\n'
+                  '                anyoneCanAddSelf: event.anyoneCanAddSelf,\n'
+                  '                colorId: event.colorId,\n'
+                  '            },\n        });\n        return res.data;\n    }\n    async getEvent')
+    old_update = ('                start: { date: event.start },\n'
+                  '                end: { date: event.end },\n'
+                  '                anyoneCanAddSelf: event.anyoneCanAddSelf,\n'
+                  '                colorId: event.colorId,\n'
+                  '            },\n        });\n        return res.data;\n    }\n    async deleteEvent')
+    new_update = ('                start: event.start.includes("T") ? { dateTime: event.start, timeZone: event.timeZone || "UTC" } : { date: event.start },\n'
+                  '                end: event.end.includes("T") ? { dateTime: event.end, timeZone: event.timeZone || "UTC" } : { date: event.end },\n'
+                  '                anyoneCanAddSelf: event.anyoneCanAddSelf,\n'
+                  '                colorId: event.colorId,\n'
+                  '            },\n        });\n        return res.data;\n    }\n    async deleteEvent')
+    if old_create not in content: raise SystemExit("google-calendar.js createEvent patch target not found")
+    if old_update not in content: raise SystemExit("google-calendar.js updateEvent patch target not found")
+    content = content.replace(old_create, new_create).replace(old_update, new_update)
+    with open(path, "w") as f: f.write(content)
+    print("google-calendar.js patched")
+    PYEOF
+      echo "google-calendar.js patch applied"
+    else
+      echo "google-calendar.js already patched, skipping"
+    fi
+  args:
+    executable: /bin/bash
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcal') | list | length > 0
+  changed_when: false
+  register: gcal_patch_result
+  failed_when: gcal_patch_result.rc != 0
 
 - name: Install Claude Code CLI on host for plugin management
   community.general.npm:
@@ -1140,6 +1454,59 @@
           Pi auth smoke test stderr: {{ pi_auth_smoke.stderr | default('(did not run or not reached)') }}
           Check task output above for details.
 
+- name: Resolve Gmail MCP binary path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ npm_prefix_bin }}:$PATH"
+    BINARY=$(which gmail-mcp 2>/dev/null || echo "")
+    if [ -z "$BINARY" ]; then
+        echo "ERROR: gmail-mcp not found at {{ npm_prefix_bin }}/gmail-mcp"
+        exit 1
+    fi
+    echo "$BINARY"
+  args:
+    executable: /bin/bash
+  register: gmail_mcp_binary
+  changed_when: false
+  failed_when: false
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gmail') | list | length > 0
+
+- name: Resolve Google Drive MCP binary path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ npm_prefix_bin }}:$PATH"
+    which mcp-server-gdrive 2>/dev/null || echo ""
+  args:
+    executable: /bin/bash
+  register: gdrive_mcp_binary
+  changed_when: false
+  failed_when: false
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gdrive') | list | length > 0
+
+- name: Resolve Google Calendar MCP binary path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ npm_prefix_bin }}:$PATH"
+    which mcp-google-calendar 2>/dev/null || echo ""
+  args:
+    executable: /bin/bash
+  register: gcal_mcp_binary
+  changed_when: false
+  failed_when: false
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcal') | list | length > 0
+
+- name: Resolve Google Contacts MCP wrapper path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export PATH="{{ npm_prefix_bin }}:$PATH"
+    which google-contacts-mcp-wrapper 2>/dev/null || echo ""
+  args:
+    executable: /bin/bash
+  register: gcontacts_mcp_binary
+  changed_when: false
+  failed_when: false
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcontacts') | list | length > 0
+
 - name: Validate token variable names are defined
   ansible.builtin.assert:
     that:
@@ -1169,6 +1536,147 @@
   no_log: true
   changed_when: false
   when: claude_setup_token | default('') | length > 0
+
+- name: Write Gmail credential files for MCP server
+  when:
+    - gmail_client_id | default('') | length > 0
+    - gmail_refresh_token | default('') | length > 0
+    - _openclaw_mcp_servers | selectattr('type', 'equalto', 'gmail') | list | length > 0
+  block:
+    - name: Ensure ~/.gmail-mcp directory exists
+      ansible.builtin.file:
+        path: /home/ubuntu/.gmail-mcp
+        state: directory
+        mode: "0700"
+
+    - name: Write Gmail OAuth keys file (client credentials)
+      ansible.builtin.copy:
+        content: "{{ {'installed': {'client_id': gmail_client_id, 'client_secret': gmail_client_secret, 'redirect_uris': ['http://localhost']}} | to_json }}"
+        dest: /home/ubuntu/.gmail-mcp/gcp-oauth.keys.json
+        mode: "0600"
+      no_log: true
+
+    - name: Write Gmail token file (refresh token)
+      ansible.builtin.copy:
+        content: "{{ {'refresh_token': gmail_refresh_token, 'token_type': 'Bearer'} | to_json }}"
+        dest: /home/ubuntu/.gmail-mcp/credentials.json
+        mode: "0600"
+      no_log: true
+
+- name: Write Google Drive credential files for MCP server
+  when:
+    - gmail_client_id | default('') | length > 0
+    - gmail_refresh_token | default('') | length > 0
+    - _openclaw_mcp_servers | selectattr('type', 'equalto', 'gdrive') | list | length > 0
+  block:
+    - name: Ensure ~/.gdrive-mcp directory exists
+      ansible.builtin.file:
+        path: /home/ubuntu/.gdrive-mcp
+        state: directory
+        mode: "0700"
+
+    - name: Write Google Drive OAuth keys file (client credentials)
+      ansible.builtin.copy:
+        content: "{{ {'installed': {'client_id': gmail_client_id, 'client_secret': gmail_client_secret, 'redirect_uris': ['http://localhost']}} | to_json }}"
+        dest: /home/ubuntu/.gdrive-mcp/gcp-oauth.keys.json
+        mode: "0600"
+      no_log: true
+
+    - name: Write Google Drive token file (refresh token)
+      ansible.builtin.copy:
+        content: "{{ {'refresh_token': gmail_refresh_token, 'token_type': 'Bearer'} | to_json }}"
+        dest: /home/ubuntu/.gdrive-mcp/credentials.json
+        mode: "0600"
+      no_log: true
+
+- name: Write Google Calendar credential files for MCP server
+  when:
+    - gmail_client_id | default('') | length > 0
+    - gmail_refresh_token | default('') | length > 0
+    - _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcal') | list | length > 0
+  block:
+    - name: Ensure ~/.gcal-mcp directory exists
+      ansible.builtin.file:
+        path: /home/ubuntu/.gcal-mcp
+        state: directory
+        mode: "0700"
+
+    - name: Write Google Calendar OAuth keys file (client credentials)
+      ansible.builtin.copy:
+        content: "{{ {'installed': {'client_id': gmail_client_id, 'client_secret': gmail_client_secret, 'redirect_uris': ['http://localhost']}} | to_json }}"
+        dest: /home/ubuntu/.gcal-mcp/credentials.json
+        mode: "0600"
+      no_log: true
+
+    - name: Write Google Calendar token file (refresh token)
+      # mcp-google-calendar reads TOKEN_PATH = dirname(CREDENTIALS_PATH) + "/mcp-google-calendar-token.json"
+      ansible.builtin.copy:
+        content: "{{ {'refresh_token': gmail_refresh_token, 'token_type': 'Bearer'} | to_json }}"
+        dest: /home/ubuntu/.gcal-mcp/mcp-google-calendar-token.json
+        mode: "0600"
+      no_log: true
+
+- name: Write Google Contacts credential files and wrapper script for MCP server
+  # google-contacts-mcp (stdio) needs GOOGLE_ACCESS_TOKEN — a short-lived token.
+  # The wrapper script exchanges the stored refresh_token for an access_token on each startup.
+  # Reuses the same Gmail OAuth client_id/secret and refresh_token as gcal.
+  # Note: if the refresh_token lacks contacts scope (https://www.googleapis.com/auth/contacts),
+  #       re-authorize OAuth and update gmail_refresh_token in Pulumi.
+  when:
+    - gmail_client_id | default('') | length > 0
+    - gmail_refresh_token | default('') | length > 0
+    - _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcontacts') | list | length > 0
+  block:
+    - name: Ensure ~/.gcontacts-mcp directory exists
+      ansible.builtin.file:
+        path: /home/ubuntu/.gcontacts-mcp
+        state: directory
+        mode: "0700"
+
+    - name: Write Google Contacts OAuth keys file (client credentials)
+      ansible.builtin.copy:
+        content: "{{ {'installed': {'client_id': gmail_client_id, 'client_secret': gmail_client_secret, 'redirect_uris': ['http://localhost']}} | to_json }}"
+        dest: /home/ubuntu/.gcontacts-mcp/credentials.json
+        mode: "0600"
+      no_log: true
+
+    - name: Write Google Contacts token file (refresh token)
+      ansible.builtin.copy:
+        content: "{{ {'refresh_token': gmail_refresh_token, 'token_type': 'Bearer'} | to_json }}"
+        dest: /home/ubuntu/.gcontacts-mcp/token.json
+        mode: "0600"
+      no_log: true
+
+    - name: Install google-contacts-mcp token-refresh wrapper script
+      ansible.builtin.copy:
+        dest: "{{ npm_prefix_bin }}/google-contacts-mcp-wrapper"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Wrapper for google-contacts-mcp (stdio transport).
+          # Exchanges stored refresh_token for a short-lived access_token on each startup.
+          set -euo pipefail
+          CREDS_FILE="/home/ubuntu/.gcontacts-mcp/credentials.json"
+          TOKEN_FILE="/home/ubuntu/.gcontacts-mcp/token.json"
+          BINARY="{{ npm_prefix_bin }}/google-contacts-mcp"
+          if [ ! -f "$CREDS_FILE" ] || [ ! -f "$TOKEN_FILE" ]; then
+            echo "google-contacts-mcp-wrapper: credentials or token file missing" >&2; exit 1
+          fi
+          CLIENT_ID=$(python3 -c "import json; d=json.load(open('$CREDS_FILE')); print(d['installed']['client_id'])")
+          CLIENT_SECRET=$(python3 -c "import json; d=json.load(open('$CREDS_FILE')); print(d['installed']['client_secret'])")
+          REFRESH_TOKEN=$(python3 -c "import json; d=json.load(open('$TOKEN_FILE')); print(d['refresh_token'])")
+          RESPONSE=$(curl -sf -X POST https://oauth2.googleapis.com/token \
+            --data-urlencode "client_id=$CLIENT_ID" \
+            --data-urlencode "client_secret=$CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$REFRESH_TOKEN" \
+            --data-urlencode "grant_type=refresh_token")
+          ACCESS_TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || true)
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "google-contacts-mcp-wrapper: failed to obtain access token: $RESPONSE" >&2
+            echo "If scope error: re-authorize OAuth with contacts scope and update ~/.gcontacts-mcp/token.json" >&2
+            exit 1
+          fi
+          exec env GOOGLE_ACCESS_TOKEN="$ACCESS_TOKEN" MCP_TRANSPORT=stdio "$BINARY" "$@"
 
 - name: Build and write plugin config JSON
   ansible.builtin.shell: |
@@ -1371,6 +1879,65 @@
     fi
     {% else %}
     echo "NOTE: Node exec disabled (node_exec_enabled=false in group_vars/all.yml)" >&2
+    {% endif %}
+
+    {% if _openclaw_mcp_servers | selectattr('type', 'equalto', 'gmail') | list | length > 0 %}
+    # Gmail servers — stdio process, credentials pre-written to ~/.gmail-mcp/ by Ansible
+    GMAIL_BINARY="{{ (gmail_mcp_binary.stdout | default('')) | trim }}"
+    if [ -f "/home/ubuntu/.gmail-mcp/credentials.json" ] && [ -n "$GMAIL_BINARY" ] && [ -x "$GMAIL_BINARY" ]; then
+    {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'gmail') %}
+        SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
+            --arg cmd "$GMAIL_BINARY" \
+            '. + [{name: $name, transport: "stdio", command: $cmd}]')
+    {% endfor %}
+    else
+        echo "NOTE: Skipping Gmail MCP servers (credentials='$([ -f /home/ubuntu/.gmail-mcp/credentials.json ] && echo found || echo missing)', binary='${GMAIL_BINARY}')" >&2
+    fi
+    {% endif %}
+
+    {% if _openclaw_mcp_servers | selectattr('type', 'equalto', 'gdrive') | list | length > 0 %}
+    # Google Drive servers — stdio, credentials pre-written to ~/.gdrive-mcp/ by Ansible
+    GDRIVE_BINARY="{{ (gdrive_mcp_binary.stdout | default('')) | trim }}"
+    if [ -f "/home/ubuntu/.gdrive-mcp/credentials.json" ] && [ -n "$GDRIVE_BINARY" ] && [ -x "$GDRIVE_BINARY" ]; then
+    {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'gdrive') %}
+        SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
+            --arg cmd "$GDRIVE_BINARY" \
+            --arg oauth "/home/ubuntu/.gdrive-mcp/gcp-oauth.keys.json" \
+            --arg creds "/home/ubuntu/.gdrive-mcp/credentials.json" \
+            '. + [{name: $name, transport: "stdio", command: $cmd, env: {GDRIVE_OAUTH_PATH: $oauth, GDRIVE_CREDENTIALS_PATH: $creds}}]')
+    {% endfor %}
+    else
+        echo "NOTE: Skipping Google Drive MCP servers (credentials='$([ -f /home/ubuntu/.gdrive-mcp/credentials.json ] && echo found || echo missing)', binary='${GDRIVE_BINARY}')" >&2
+    fi
+    {% endif %}
+
+    {% if _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcal') | list | length > 0 %}
+    # Google Calendar servers — stdio, credentials pre-written to ~/.gcal-mcp/ by Ansible
+    GCAL_BINARY="{{ (gcal_mcp_binary.stdout | default('')) | trim }}"
+    if [ -f "/home/ubuntu/.gcal-mcp/mcp-google-calendar-token.json" ] && [ -n "$GCAL_BINARY" ] && [ -x "$GCAL_BINARY" ]; then
+    {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcal') %}
+        SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
+            --arg cmd "$GCAL_BINARY" \
+            --arg creds "/home/ubuntu/.gcal-mcp/credentials.json" \
+            '. + [{name: $name, transport: "stdio", command: $cmd, env: {CREDENTIALS_PATH: $creds}}]')
+    {% endfor %}
+    else
+        echo "NOTE: Skipping Google Calendar MCP servers (token='$([ -f /home/ubuntu/.gcal-mcp/mcp-google-calendar-token.json ] && echo found || echo missing)', binary='${GCAL_BINARY}')" >&2
+    fi
+    {% endif %}
+
+    {% if _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcontacts') | list | length > 0 %}
+    # Google Contacts servers — stdio via wrapper script that exchanges refresh_token for access_token
+    GCONTACTS_BINARY="{{ (gcontacts_mcp_binary.stdout | default('')) | trim }}"
+    if [ -f "/home/ubuntu/.gcontacts-mcp/token.json" ] && [ -n "$GCONTACTS_BINARY" ] && [ -x "$GCONTACTS_BINARY" ]; then
+    {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcontacts') %}
+        SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
+            --arg cmd "$GCONTACTS_BINARY" \
+            '. + [{name: $name, transport: "stdio", command: $cmd}]')
+    {% endfor %}
+    else
+        echo "NOTE: Skipping Google Contacts MCP servers (token='$([ -f /home/ubuntu/.gcontacts-mcp/token.json ] && echo found || echo missing)', binary='${GCONTACTS_BINARY}')" >&2
+    fi
     {% endif %}
 
     # Build final config
