@@ -362,6 +362,22 @@
   changed_when: "'PATCHED' in adapter_js_idempotent.stdout"
   failed_when: "'FAIL' in adapter_js_idempotent.stdout"
 
+- name: Install @openclaw/codex plugin (required for codex harness in OpenClaw >=2026.5.22)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export XDG_RUNTIME_DIR=/run/user/1000
+    INSTALLED=$(openclaw plugins list 2>/dev/null | grep -c "@openclaw/codex" || echo "0")
+    if [ "$INSTALLED" -gt "0" ]; then
+      echo "OK"
+      exit 0
+    fi
+    openclaw plugins install @openclaw/codex
+    echo "INSTALLED"
+  args:
+    executable: /bin/bash
+  register: codex_plugin_install
+  changed_when: "'INSTALLED' in codex_plugin_install.stdout"
+
 - name: Ensure npm global prefix is configured
   ansible.builtin.shell: |
     set -euo pipefail
