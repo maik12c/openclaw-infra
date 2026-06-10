@@ -201,11 +201,25 @@ jobs:
             pulumi cancel --yes --stack staging 2>/dev/null || true
             pulumi refresh --yes --stack staging 2>/dev/null || true
             pulumi config set serverLocation fsn1 --stack staging
-            # The retry may report stale "errored" resources from the first failed attempt
-            # even when Ansible completes successfully. Ignore Pulumi's exit code — the
-            # verification and smoke test steps that follow will catch real failures.
+            # The retry may report stale "errored" resources from the first failed
+            # attempt even when Ansible succeeded, so Pulumi's exit code is not
+            # trustworthy here. But do NOT blindly swallow it — that previously hid a
+            # real Ansible failure (failed=1) behind a green "deploy", which only
+            # surfaced two steps later as a confusing workspace-sync error. Gate on
+            # Ansible's own PLAY RECAP instead: any failed>0 or unreachable>0 is a real
+            # provisioning failure and must fail the step; a non-zero Pulumi exit with a
+            # clean recap is the tolerated stale-resource case.
             set +o pipefail
-            pulumi up --yes --stack staging || true
+            # Truncate (not -a): the first attempt's log was only needed for the
+            # resource_unavailable check above. Appending would let a stale
+            # failed=N PLAY RECAP from that aborted attempt trip the gate below
+            # even when this retry's recap is clean.
+            pulumi up --yes --stack staging 2>&1 | tee /tmp/pulumi-up.log || true
+            if grep -qE '(failed|unreachable)=[1-9][0-9]*' /tmp/pulumi-up.log; then
+              echo "::error::Ansible reported task failures during provisioning (PLAY RECAP below)"
+              grep -E 'PLAY RECAP|(failed|unreachable)=[1-9]|fatal:' /tmp/pulumi-up.log | tail -30
+              exit 1
+            fi
           else
             exit 1
           fi
@@ -233,11 +247,24 @@ jobs:
             | grep -oE "openclaw-staging(-[0-9]+)?" \
             | head -1)
           TAILNET=$(tailscale status --json | jq -r '.MagicDNSSuffix')
-          # Per-agent workspace services (workspace-git-sync-<agent_id>.service)
+          SSH="ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new ubuntu@${HOST}.${TAILNET}"
+          # A freshly-written unit is invisible to the user manager until a
+          # daemon-reload; the role notifies one, but reload before starting so
+          # this trigger never races it. Then list what exists for diagnostics.
+          $SSH "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload"
+          echo "Workspace sync units present on host:"
+          $SSH "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user list-unit-files 'workspace-git-sync-*' --no-legend --no-pager" || true
+          # Kick each per-agent sync. This is an auxiliary trigger — the workspace
+          # role already does the initial commit/push during deploy — so a missing
+          # unit warns loudly but must not sink the phoenix (verify + smoke are the
+          # real gates). A unit that exists but fails to start IS fatal.
           for agent in main test; do
-            ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new \
-              "ubuntu@${HOST}.${TAILNET}" \
-              "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user start workspace-git-sync-${agent}.service"
+            unit="workspace-git-sync-${agent}.service"
+            if $SSH "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user cat ${unit} >/dev/null 2>&1"; then
+              $SSH "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user start ${unit}"
+            else
+              echo "::warning::${unit} not present on host — skipping its sync trigger (workspace role may not have created it for this agent)"
+            fi
           done
 
       # ── Verify ───────────────────────────────────────────────────
