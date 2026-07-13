@@ -39,7 +39,7 @@ openclaw_custom_models:
           name: "Whisper-1"
           input: ["audio"]
 nodejs_major_version: 25
-openclaw_version: "2026.5.7"
+openclaw_version: "2026.6.6"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
@@ -280,38 +280,32 @@ openclaw_mcp_server_types:
   - type: "gcontacts"
     name_prefix: "gcontacts"
 
-# Claude Code plugins for MCP containers
-claude_code_plugins:
-  config_dir: "/home/ubuntu/.openclaw/claude-code-plugins"
-  marketplaces:
-    - repo: "anthropics/claude-plugins-official"
-    - repo: "pandysp/claude-plugins"
-    - repo: "astral-sh/claude-code-plugins"
-  plugins:
-    - "code-review"
-    - "code-simplifier"
-    - "commit-commands"
-    - "feature-dev"
-    - "frontend-design"
-    - "hookify"
-    - "plugin-dev"
-    - "pr-review-toolkit"
-    - "ralph-loop"
-    - "security-guidance"
-    - "astral@astral-sh"
-    - "typescript-lsp@pandysp"
+# Claude Code plugins installed into the VPS agents' `claude` CLI.
+#
+# Intentionally NOT defaulted here: which plugins a deployment wants is a
+# per-deployment choice, and a hardcoded list silently rots when upstream
+# marketplaces change (e.g. a plugin removed from its marketplace breaks
+# provisioning). Define `claude_code_plugins` in group_vars/openclaw.yml to
+# enable it — see openclaw.yml.example for the structure. When it is undefined
+# the plugins role simply skips Claude Code plugin install
+# (`when: claude_code_plugins is defined`).
 
 # Obsidian Headless Sync (obsidian-headless npm package)
 # Runs per-workspace sync daemons for near-real-time Obsidian Sync cloud access.
 # Override in openclaw.yml to enable and configure per-deployment.
 obsidian_headless_enabled: false
-obsidian_headless_version: "0.0.7"
+obsidian_headless_version: "0.0.12"
 obsidian_headless_memory_max: "256M"
 obsidian_headless_agents: []
 obsidian_headless_initial_sync_timeout: 300
 # Common non-vault directories to exclude from Obsidian Sync.
 # Override in openclaw.yml to add workspace-specific exclusions.
 obsidian_headless_excluded_folders: ".git,.venv,node_modules,.cache,.env"
+# Obsidian config categories to sync. community-plugin[-data] is what carries
+# community plugins to mobile (they ride git between machines, but only Obsidian
+# Sync reaches the phone). Empty string disables config syncing entirely.
+# Must match setup-mac-workspaces.sh OBSIDIAN_CONFIGS.
+obsidian_headless_configs: "community-plugin,community-plugin-data"
 
 # Note: openclaw_workspaces is auto-generated in playbook.yml pre_tasks from
 # openclaw_agents. Override by defining openclaw_workspaces in openclaw.yml.

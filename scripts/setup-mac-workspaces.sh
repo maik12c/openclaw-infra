@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Setup Mac workspace sync: git backup (hourly) + Obsidian Headless (continuous).
+# Prepare Mac agent workspaces for sync. PREP ONLY — installs no services.
 #
-# Mirrors the VPS sync setup for all agent workspaces on the Mac:
-#   - Git sync scripts + LaunchAgents (hourly at :30, staggered from VPS at :00)
-#   - Obsidian Headless vault linking + LaunchAgents (continuous sync)
+# Per selected agent, this does the one-time setup the daemons depend on:
+#   - Git repo setup (.gitignore, SSH remote, create + push if absent)
+#   - Install ~/.local/bin/workspace-git-sync-<agent>.sh (the helper the daemon runs)
+#   - Obsidian Headless vault linking (+ exclusions + initial sync)
+#
+# The four per-agent daemons (git-sync, obsidian-headless, qmd-watch, qmd-http)
+# are deployed separately by deploy-mac-daemons.sh as login-independent system
+# LaunchDaemons. Splitting prep from the service layer lets that one deployer own
+# launchctl for every account, so running this for prep can never double-run a daemon.
 #
 # Agent list is read from ansible/group_vars/openclaw.yml (single source of truth).
 # Workspace dir convention: <agent_id>-workspace
@@ -17,44 +23,58 @@
 #   - ~/.obsidian-headless/auth_token exists (ob login)
 #
 # Usage:
-#   ./scripts/setup-mac-workspaces.sh              # Full setup
-#   ./scripts/setup-mac-workspaces.sh --uninstall   # Remove all LaunchAgents + scripts
+#   ./scripts/setup-mac-workspaces.sh                 # prep all agents
+#   ./scripts/setup-mac-workspaces.sh main tl          # prep specific agents
+#   ./scripts/setup-mac-workspaces.sh --uninstall      # remove git-sync helper scripts
 #
 # Re-running is safe (idempotent). Each step checks existing state before acting.
+# Deploy/teardown of the daemons themselves: deploy-mac-daemons.sh.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/agents.sh"
 
-WORKSPACES_DIR="$HOME/projects/workspaces"
+WORKSPACES_DIR="$HOME/dev/personal/workspaces"
 GITIGNORE_SRC="$SCRIPT_DIR/../ansible/roles/workspace/files/gitignore-workspace"
 SYNC_TEMPLATE="$SCRIPT_DIR/templates/workspace-git-sync-mac.sh.tmpl"
 SYNC_BIN_DIR="$HOME/.local/bin"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-OB_BIN="$HOME/Library/pnpm/ob"
+# Resolve ob: validated path (no /bin/) and spec path (/bin/) differ per machine
+# (Studio: bin/ob; Air: pnpm/ob). Running ob via a symlink breaks its module
+# resolution, so we must point at the REAL binary. Mirrors deploy resolve_ob_bin.
+OB_BIN=""
+for _ob in "$HOME/Library/pnpm/bin/ob" "$HOME/Library/pnpm/ob"; do
+    [ -x "$_ob" ] && { OB_BIN="$_ob"; break; }
+done
+[ -n "$OB_BIN" ] || OB_BIN="$(command -v ob || true)"
+# ob's native better-sqlite3 (12.6.2) is ABI-locked to Node 23.11.0; pin it so ob
+# works regardless of the default node (which may be 26). Mirrors deploy-mac-daemons.sh.
+OB_NODE_BIN="$HOME/.local/share/mise/installs/node/23.11.0/bin"
 GITHUB_ORG="pandysp"
 GUI_DOMAIN="gui/$(id -u)"
 INITIAL_SYNC_TIMEOUT=120
 
-# Resolve node binary path for LaunchAgents (ob wrapper needs `node` in PATH).
-# asdf shims don't work in LaunchAgent context — use the direct install path.
-if command -v asdf &>/dev/null; then
-    NODE_BIN_DIR="$(asdf where nodejs 2>/dev/null)/bin"
-elif [ -x "/opt/homebrew/bin/node" ]; then
-    NODE_BIN_DIR="/opt/homebrew/bin"
-else
-    NODE_BIN_DIR="/usr/local/bin"
-fi
-LAUNCHAGENT_PATH="${NODE_BIN_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-
 # Excluded folders for Obsidian Sync — must match VPS deployment
 OBSIDIAN_EXCLUDED_FOLDERS=".git,.venv,.packages,.npm-packages,.bin,.cache,.local,.npm,.qmd,.scripts,.claude,.ralph,.env,.beads,.config,.dev,.dolt,.openclaw,.pi,.repos,.state,node_modules,repos,claude-code-mcp,reranker-bench,obsidian,migration"
+
+# Obsidian config categories to sync — must match VPS (obsidian_headless_configs).
+# community-plugin[-data] is what carries community plugins to mobile. Empty disables.
+OBSIDIAN_CONFIGS="community-plugin,community-plugin-data"
 
 # --- Helpers ---
 
 log() { echo "==> $*"; }
 warn() { echo "WARNING: $*" >&2; }
+
+# Run ob under the pinned Node — its native better-sqlite3 won't load otherwise.
+ob_run() {
+    if [ -d "$OB_NODE_BIN" ]; then
+        PATH="$OB_NODE_BIN:$PATH" "$OB_BIN" "$@"
+    else
+        "$OB_BIN" "$@"
+    fi
+}
 
 plist_id_git() { echo "com.openclaw.workspace-git-sync-$1"; }
 plist_id_ob()  { echo "com.openclaw.obsidian-headless-$1"; }
@@ -155,11 +175,24 @@ else
     fi
 fi
 
-AGENT_IDS=($(get_agent_ids))
+# Resolve selected agents (positional args filter the full list; none = all).
+ALL_AGENT_IDS=($(get_agent_ids))
+AGENT_IDS=()
+if [ $# -gt 0 ]; then
+    for arg in "$@"; do
+        found=false
+        for id in "${ALL_AGENT_IDS[@]}"; do
+            [ "$id" = "$arg" ] && { AGENT_IDS+=("$arg"); found=true; break; }
+        done
+        $found || { echo "ERROR: Unknown agent '$arg'. Available: ${ALL_AGENT_IDS[*]}"; exit 1; }
+    done
+else
+    AGENT_IDS=("${ALL_AGENT_IDS[@]}")
+fi
 
 echo ""
 echo "=========================================="
-echo "  Mac Workspace Sync Setup"
+echo "  Mac Workspace Prep (no services)"
 echo "  Agents: ${AGENT_IDS[*]}"
 echo "=========================================="
 echo ""
@@ -172,7 +205,7 @@ log "Step 1: Git repository setup"
 
 for agent_id in "${AGENT_IDS[@]}"; do
     repo_name=$(workspace_repo_name "$agent_id")
-    workspace_dir="$WORKSPACES_DIR/${agent_id}-workspace"
+    workspace_dir="$(workspace_dir_for "$agent_id" "$WORKSPACES_DIR")"
 
     if [ ! -d "$workspace_dir" ]; then
         warn "Workspace directory missing: $workspace_dir — skipping"
@@ -246,13 +279,13 @@ done
 echo ""
 
 # ============================================================
-# STEP 2: Git sync scripts + LaunchAgents
+# STEP 2: Git sync helper scripts
 # ============================================================
 
-log "Step 2: Git sync scripts + LaunchAgents (hourly at :30)"
+log "Step 2: Git sync helper scripts"
 
 for agent_id in "${AGENT_IDS[@]}"; do
-    workspace_dir="$WORKSPACES_DIR/${agent_id}-workspace"
+    workspace_dir="$(workspace_dir_for "$agent_id" "$WORKSPACES_DIR")"
 
     if [ ! -d "$workspace_dir/.git" ]; then
         warn "$agent_id has no .git — skipping git sync setup"
@@ -269,45 +302,6 @@ for agent_id in "${AGENT_IDS[@]}"; do
         "$SYNC_TEMPLATE" > "$script_path"
     chmod +x "$script_path"
     echo "  Installed: $script_path"
-
-    # Create LaunchAgent plist
-    plist="$(plist_path_git "$agent_id")"
-    label="$(plist_id_git "$agent_id")"
-    log_dir="$HOME/Library/Logs/openclaw"
-    mkdir -p "$log_dir"
-
-    cat > "$plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>${label}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/bash</string>
-        <string>${script_path}</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>${LAUNCHAGENT_PATH}</string>
-        <key>HOME</key>
-        <string>${HOME}</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>${log_dir}/git-sync-${agent_id}.log</string>
-    <key>StandardErrorPath</key>
-    <string>${log_dir}/git-sync-${agent_id}.log</string>
-</dict>
-</plist>
-EOF
-    echo "  Installed: $plist"
 done
 
 echo ""
@@ -319,7 +313,7 @@ echo ""
 log "Step 3: Obsidian Headless vault linking"
 
 for agent_id in "${AGENT_IDS[@]}"; do
-    workspace_dir="$WORKSPACES_DIR/${agent_id}-workspace"
+    workspace_dir="$(workspace_dir_for "$agent_id" "$WORKSPACES_DIR")"
     vault_name="${agent_id}-workspace"
 
     if [ ! -d "$workspace_dir" ]; then
@@ -329,129 +323,52 @@ for agent_id in "${AGENT_IDS[@]}"; do
 
     echo "  --- $agent_id ---"
 
-    # Check if already linked
-    if "$OB_BIN" sync-status --path "$workspace_dir" &>/dev/null; then
+    # First-time link only: link the vault to its remote.
+    linked_now=false
+    if ob_run sync-status --path "$workspace_dir" &>/dev/null; then
         echo "  Already linked to Obsidian Sync"
-        continue
+    else
+        # Find vault ID by name
+        vault_id=$(ob_run sync-list-remote 2>&1 | grep "$vault_name" | awk '{print $1}' || true)
+        if [ -z "$vault_id" ]; then
+            warn "Remote vault '$vault_name' not found — skipping. Create it on VPS first."
+            continue
+        fi
+        echo "  Linking vault $vault_name (ID: $vault_id)..."
+        ob_run sync-setup \
+            --vault "$vault_id" \
+            --path "$workspace_dir" \
+            --password "$VAULT_PASSWORD" \
+            --device-name "mac-${agent_id}"
+        linked_now=true
     fi
 
-    # Find vault ID by name
-    vault_id=$("$OB_BIN" sync-list-remote 2>&1 | grep "$vault_name" | awk '{print $1}' || true)
-    if [ -z "$vault_id" ]; then
-        warn "Remote vault '$vault_name' not found — skipping. Create it on VPS first."
-        continue
-    fi
-
-    echo "  Linking vault $vault_name (ID: $vault_id)..."
-
-    "$OB_BIN" sync-setup \
-        --vault "$vault_id" \
+    # Every run: enforce sync config so config changes (e.g. enabling
+    # community-plugin sync) reach already-linked vaults too — mirrors the VPS
+    # obsidian-headless role. This script is prep-only; the daemon re-reads the
+    # config on its next restart, which deploy-mac-daemons.sh always performs.
+    echo "  Configuring sync (exclusions + config categories)..."
+    ob_run sync-config \
         --path "$workspace_dir" \
-        --password "$VAULT_PASSWORD" \
-        --device-name "mac-${agent_id}"
+        --excluded-folders "$OBSIDIAN_EXCLUDED_FOLDERS" \
+        --configs "$OBSIDIAN_CONFIGS"
 
-    echo "  Configuring exclusions..."
-    "$OB_BIN" sync-config \
-        --path "$workspace_dir" \
-        --excluded-folders "$OBSIDIAN_EXCLUDED_FOLDERS"
-
-    echo "  Running initial sync (timeout: ${INITIAL_SYNC_TIMEOUT}s)..."
-    # macOS has no `timeout` command — use background + sleep + kill
-    "$OB_BIN" sync --path "$workspace_dir" &
-    OB_PID=$!
-    (
-        sleep "$INITIAL_SYNC_TIMEOUT"
-        kill "$OB_PID" 2>/dev/null || true
-    ) &
-    TIMER_PID=$!
-    wait "$OB_PID" 2>/dev/null || true
-    kill "$TIMER_PID" 2>/dev/null || true
-    wait "$TIMER_PID" 2>/dev/null || true
-    echo "  Initial sync done (or timed out — daemon will continue)"
-done
-
-echo ""
-
-# ============================================================
-# STEP 4: Obsidian Headless LaunchAgents
-# ============================================================
-
-log "Step 4: Obsidian Headless LaunchAgents (continuous sync)"
-
-for agent_id in "${AGENT_IDS[@]}"; do
-    workspace_dir="$WORKSPACES_DIR/${agent_id}-workspace"
-
-    if [ ! -d "$workspace_dir" ]; then
-        warn "Workspace missing: $workspace_dir — skipping"
-        continue
-    fi
-
-    echo "  --- $agent_id ---"
-
-    plist="$(plist_path_ob "$agent_id")"
-    label="$(plist_id_ob "$agent_id")"
-    log_dir="$HOME/Library/Logs/openclaw"
-    mkdir -p "$log_dir"
-
-    cat > "$plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>${label}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${OB_BIN}</string>
-        <string>sync</string>
-        <string>--path</string>
-        <string>${workspace_dir}</string>
-        <string>--continuous</string>
-    </array>
-    <key>KeepAlive</key>
-    <true/>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>${LAUNCHAGENT_PATH}</string>
-        <key>HOME</key>
-        <string>${HOME}</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>${log_dir}/obsidian-headless-${agent_id}.log</string>
-    <key>StandardErrorPath</key>
-    <string>${log_dir}/obsidian-headless-${agent_id}.log</string>
-</dict>
-</plist>
-EOF
-    echo "  Installed: $plist"
-done
-
-echo ""
-
-# ============================================================
-# STEP 5: Load LaunchAgents
-# ============================================================
-
-log "Step 5: Loading LaunchAgents"
-
-for agent_id in "${AGENT_IDS[@]}"; do
-    # Git sync agent
-    plist_git="$(plist_path_git "$agent_id")"
-    if [ -f "$plist_git" ]; then
-        bootout_if_loaded "$plist_git"
-        launchctl bootstrap "$GUI_DOMAIN" "$plist_git"
-        echo "  Loaded: $(plist_id_git "$agent_id")"
-    fi
-
-    # Obsidian headless agent
-    plist_ob="$(plist_path_ob "$agent_id")"
-    if [ -f "$plist_ob" ]; then
-        bootout_if_loaded "$plist_ob"
-        launchctl bootstrap "$GUI_DOMAIN" "$plist_ob"
-        echo "  Loaded: $(plist_id_ob "$agent_id")"
+    # First-time link only: a blocking initial sync so the vault is populated
+    # before the daemon starts.
+    if [ "$linked_now" = true ]; then
+        echo "  Running initial sync (timeout: ${INITIAL_SYNC_TIMEOUT}s)..."
+        # macOS has no `timeout` command — use background + sleep + kill
+        ob_run sync --path "$workspace_dir" &
+        OB_PID=$!
+        (
+            sleep "$INITIAL_SYNC_TIMEOUT"
+            kill "$OB_PID" 2>/dev/null || true
+        ) &
+        TIMER_PID=$!
+        wait "$OB_PID" 2>/dev/null || true
+        kill "$TIMER_PID" 2>/dev/null || true
+        wait "$TIMER_PID" 2>/dev/null || true
+        echo "  Initial sync done (or timed out — daemon will continue)"
     fi
 done
 
@@ -463,14 +380,16 @@ echo ""
 
 agent_count=${#AGENT_IDS[@]}
 echo "=========================================="
-echo "  Setup complete! ($agent_count agents)"
+echo "  Prep complete! ($agent_count agents)"
 echo "=========================================="
 echo ""
+echo "This installed no services. Deploy the daemons with:"
+echo "  ./scripts/deploy-mac-daemons.sh ${AGENT_IDS[*]}"
+echo ""
 echo "Verification:"
-echo "  launchctl list | grep openclaw    # Should show $((agent_count * 2)) agents"
-echo "  ob sync-status --path .../<id>-workspace   # Check vault link"
+echo "  ob sync-status --path <workspace>           # Check vault link"
 echo "  ~/.local/bin/workspace-git-sync-<id>.sh     # Manual git sync test"
 echo ""
 echo "Logs: ~/Library/Logs/openclaw/"
 echo ""
-echo "To uninstall: $0 --uninstall"
+echo "To remove git-sync helper scripts: $0 --uninstall"
