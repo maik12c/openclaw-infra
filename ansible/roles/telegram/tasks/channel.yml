@@ -116,6 +116,12 @@
         openclaw config set channels.telegram.groups --json "$DESIRED_GROUPS"
         CHANGED="yes"
     fi
+    {% else %}
+    CURRENT_GP=$(openclaw config get channels.telegram.groupPolicy 2>/dev/null | sed '/^\[mcp-adapter\]/d; /^\[plugins\]/d') || CURRENT_GP=""
+    if [ "$CURRENT_GP" != "disabled" ]; then
+        openclaw config set channels.telegram.groupPolicy "disabled"
+        CHANGED="yes"
+    fi
     {% endif %}
 
     if [ -n "$CHANGED" ]; then echo "UPDATED"; else echo "OK"; fi

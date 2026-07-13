@@ -69,6 +69,9 @@ else
     export PROVISION_DISCORD_BOT_TOKEN=$(pulumi config get discordBotToken 2>/dev/null || echo "")
     export PROVISION_DISCORD_GUILD_ID=$(pulumi config get discordGuildId 2>/dev/null || echo "")
     export PROVISION_DISCORD_USER_ID=$(pulumi config get discordUserId 2>/dev/null || echo "")
+    export PROVISION_GMAIL_CLIENT_ID=$(pulumi config get gmailClientId 2>/dev/null || echo "")
+    export PROVISION_GMAIL_CLIENT_SECRET=$(pulumi config get gmailClientSecret 2>/dev/null || echo "")
+    export PROVISION_GMAIL_REFRESH_TOKEN=$(pulumi config get gmailRefreshToken 2>/dev/null || echo "")
 
     # Read deploy keys: try structured export first, fall back to individual exports
     # (individual exports exist until first `pulumi up` after migration)
@@ -152,6 +155,7 @@ echo "  gateway_token: set"
 echo "  claude_setup_token: $([ -n "$(read_env PROVISION_CLAUDE_SETUP_TOKEN)" ] && echo "set (unused — OpenAI is primary)" || echo "not set")"
 echo "  telegram: $([ -n "$(read_env PROVISION_TELEGRAM_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  discord: $([ -n "$(read_env PROVISION_DISCORD_BOT_TOKEN)" ] && echo "configured" || echo "skipped")"
+echo "  gmail_mcp: $([ -n "$(read_env PROVISION_GMAIL_REFRESH_TOKEN)" ] && echo "configured" || echo "skipped")"
 echo "  workspace_sync (main): $([ -n "$(read_env PROVISION_WORKSPACE_REPO_URL)" ] && echo "configured" || echo "skipped")"
 echo "  grok_search: $([ -n "$(read_env PROVISION_XAI_API_KEY)" ] && echo "configured" || echo "skipped")"
 echo "  groq_voice: $([ -n "$(read_env PROVISION_GROQ_API_KEY)" ] && echo "configured" || echo "skipped")"
@@ -208,6 +212,9 @@ static = [
     ('discord_bot_token', 'PROVISION_DISCORD_BOT_TOKEN'),
     ('discord_guild_id', 'PROVISION_DISCORD_GUILD_ID'),
     ('discord_user_id', 'PROVISION_DISCORD_USER_ID'),
+    ('gmail_client_id', 'PROVISION_GMAIL_CLIENT_ID'),
+    ('gmail_client_secret', 'PROVISION_GMAIL_CLIENT_SECRET'),
+    ('gmail_refresh_token', 'PROVISION_GMAIL_REFRESH_TOKEN'),
 ]
 
 with open(sys.argv[1], 'w') as f:
