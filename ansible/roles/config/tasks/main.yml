@@ -777,7 +777,7 @@
         oauth_path.chmod(0o600)
         changed.append("credentials/oauth.json")
 
-    # 2. Write openai-codex:default into each agent's auth-profiles.json
+    # 2. Write openai-codex:default into the per-agent auth-profiles.json
     for agent_dir in sorted((openclaw_dir / "agents").iterdir()):
         profiles_path = agent_dir / "agent" / "auth-profiles.json"
         if not profiles_path.exists():

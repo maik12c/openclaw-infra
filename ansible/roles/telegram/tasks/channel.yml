@@ -135,13 +135,7 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
-    ENABLED=$(openclaw plugins list --json 2>/dev/null | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-plugins = data if isinstance(data, list) else data.get('plugins', [])
-tg = next((p for p in plugins if p.get('id') == 'telegram'), None)
-print(tg.get('status', 'disabled') if tg else 'missing')
-" 2>/dev/null) || ENABLED=""
+    ENABLED=$(openclaw plugins list --json 2>/dev/null | python3 -c "import sys, json; data = json.load(sys.stdin); plugins = data if isinstance(data, list) else data.get('plugins', []); tg = next((p for p in plugins if p.get('id') == 'telegram'), None); print(tg.get('status', 'disabled') if tg else 'missing')" 2>/dev/null) || ENABLED=""
     if [ "$ENABLED" != "loaded" ] && [ "$ENABLED" != "enabled" ]; then
         openclaw plugins enable telegram
         echo "UPDATED"
