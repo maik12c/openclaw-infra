@@ -4,10 +4,14 @@
 # Skipped entirely if openclaw_mcp_adapter is not defined (in playbook.yml).
 # Force reinstall with: -e force_plugin_reinstall=true
 
+# Since the 2026.6.x plugin split, `openclaw plugins install` places packages under
+# ~/.openclaw/npm/projects/<slug>/node_modules/... — search the whole npm tree so
+# both the legacy and the new layout are found.
 - name: Check if mcp-adapter plugin directory exists
-  ansible.builtin.stat:
-    path: /home/ubuntu/.openclaw/npm/node_modules/@pandysp/openclaw-mcp-adapter/dist/index.js
-  register: plugin_dir
+  ansible.builtin.shell: find /home/ubuntu/.openclaw/npm -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1
+  register: plugin_dir_find
+  changed_when: false
+  failed_when: false
 
 - name: Save existing MCP adapter config before potential reinstall
   ansible.builtin.shell: |
@@ -20,7 +24,7 @@
   changed_when: false
 
 - name: Install mcp-adapter plugin
-  when: not plugin_dir.stat.exists or force_plugin_reinstall | bool
+  when: (plugin_dir_find.stdout | default('') | length == 0) or force_plugin_reinstall | bool
   block:
     - name: Remove stale plugin config entry before reinstall
       ansible.builtin.shell: |
@@ -54,9 +58,12 @@
       changed_when: false
 
     - name: Remove existing plugin directory (reinstall)
-      ansible.builtin.file:
-        path: /home/ubuntu/.openclaw/npm/node_modules/@pandysp/openclaw-mcp-adapter
-        state: absent
+      ansible.builtin.shell: |
+        set -euo pipefail
+        rm -rf /home/ubuntu/.openclaw/npm/node_modules/@pandysp/openclaw-mcp-adapter
+        rm -rf /home/ubuntu/.openclaw/npm/projects/pandysp-openclaw-mcp-adapter-*
+      args:
+        executable: /bin/bash
       when: force_plugin_reinstall | bool
 
     - name: Install plugin from npm
@@ -70,7 +77,7 @@
     - name: Patch adapter manifest — add activation.onStartup=true (required for OpenClaw >=2026.5.x)
       ansible.builtin.shell: |
         set -euo pipefail
-        MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+        MANIFEST=$(find /home/ubuntu/.openclaw/npm -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
         if [ -z "$MANIFEST" ]; then
           echo "SKIP: manifest not found"
           exit 0
@@ -95,7 +102,7 @@
     - name: Patch adapter manifest — add contracts.tools (required for OpenClaw >=2026.5.x tool resolution)
       ansible.builtin.shell: |
         set -euo pipefail
-        MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+        MANIFEST=$(find /home/ubuntu/.openclaw/npm -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
         if [ -z "$MANIFEST" ]; then echo "SKIP: manifest not found"; exit 0; fi
         python3 -c "
         import json, sys, os
@@ -124,7 +131,7 @@
       # required so resolvePluginToolRuntimePluginIds can match contract tool names to the plugin.
       ansible.builtin.shell: |
         set -euo pipefail
-        JS=$(find /home/ubuntu/.openclaw/npm/node_modules -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
+        JS=$(find /home/ubuntu/.openclaw/npm -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
         if [ -z "$JS" ]; then echo "SKIP: dist/index.js not found"; exit 0; fi
         python3 - "$JS" << 'PYEOF'
         import sys, shutil
@@ -250,7 +257,7 @@
 - name: Ensure adapter manifest has activation.onStartup=true (idempotent, covers existing installs)
   ansible.builtin.shell: |
     set -euo pipefail
-    MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+    MANIFEST=$(find /home/ubuntu/.openclaw/npm -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
     if [ -z "$MANIFEST" ]; then
       echo "SKIP"
       exit 0
@@ -275,7 +282,7 @@
 - name: Ensure adapter manifest has contracts.tools (idempotent, covers existing installs)
   ansible.builtin.shell: |
     set -euo pipefail
-    MANIFEST=$(find /home/ubuntu/.openclaw/npm/node_modules -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
+    MANIFEST=$(find /home/ubuntu/.openclaw/npm -name "openclaw.plugin.json" -path "*openclaw-mcp-adapter*" 2>/dev/null | head -1)
     if [ -z "$MANIFEST" ]; then echo "SKIP"; exit 0; fi
     python3 -c "
     import json, sys, os
@@ -301,7 +308,7 @@
 - name: Ensure adapter dist/index.js uses factory form registration (idempotent, covers existing installs)
   ansible.builtin.shell: |
     set -euo pipefail
-    JS=$(find /home/ubuntu/.openclaw/npm/node_modules -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
+    JS=$(find /home/ubuntu/.openclaw/npm -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1)
     if [ -z "$JS" ]; then echo "SKIP"; exit 0; fi
     python3 - "$JS" << 'PYEOF'
     import sys, shutil
