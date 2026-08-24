@@ -176,6 +176,8 @@ Use `./scripts/provision.sh --tags <tag>` to run specific roles:
 
 The OpenClaw CLI is installed locally and configured to talk to the remote gateway over Tailscale. **Prefer `openclaw` commands over SSH** for gateway operations — it's faster and avoids the SSH round-trip.
 
+> **Note for the current Windows control machine:** no local `openclaw` CLI is installed there (`brew` is macOS-only), so every gateway operation runs over SSH instead — `ssh ubuntu@openclaw-vps 'XDG_RUNTIME_DIR=/run/user/1000 openclaw <cmd>'`. The instructions below assume a macOS or Linux control machine.
+
 ```bash
 # Install
 brew install openclaw-cli
@@ -303,15 +305,15 @@ After redeploy, old devices appear as `openclaw-vps-N` (offline) in your Tailsca
 
 ## Cost Breakdown
 
-Default server type is **CX43** (8 vCPU, 16 GB RAM, ~€9.49/mo). Change with `pulumi config set serverType <type>`.
+Deployed server type is **CX33** (4 vCPU, 8 GB RAM, 80 GB NVMe, ~€6/mo — regional rates vary between €5.49 and €6.59). Change with `pulumi config set serverType <type>`.
 
 | Resource | Cost |
 |----------|------|
-| Hetzner VPS (CX43) | ~€9.49/mo |
-| Hetzner Backups | ~€1.90/mo |
+| Hetzner VPS (CX33) | ~€6/mo |
+| Hetzner Backups (20% surcharge, enabled) | ~€1.20/mo |
 | Tailscale | Free (personal) |
 | ChatGPT Plus | ~$20/mo (covers all OpenClaw model usage) |
-| **Total** | **~€11.39/mo + $20/mo** |
+| **Total** | **~€7.20/mo + $20/mo** |
 
 ## Secrets Reference
 
@@ -677,7 +679,7 @@ ssh ubuntu@openclaw-vps 'XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u qmd
 ssh ubuntu@openclaw-vps 'openclaw config get plugins.entries.openclaw-mcp-adapter.config' | jq '.servers[] | select(.name | startswith("qmd"))'
 ```
 
-**RAM:** `deep_search` loads ~2.1GB GGUF models on-demand. CX43 (16 GB) handles multi-agent well. 2 GB swap configured.
+**RAM:** `deep_search` loads ~2.1GB GGUF models on-demand. The CX33 has **8 GB and no swap configured** (verified 2026-08-24), which is comfortable for the single `main` agent but leaves little headroom — check free memory before adding agents, or move to a larger server type.
 
 ## Known Technical Debt / Manual VPS Patches
 
