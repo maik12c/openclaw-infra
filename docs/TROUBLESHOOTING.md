@@ -93,6 +93,35 @@ See [CLAUDE.md — Clean Up Stale Tailscale Devices](../CLAUDE.md#clean-up-stale
 2. **Auth key expired** — generate a new key in Tailscale admin, then SSH via Hetzner console and re-run `tailscale up --authkey=<new-key> --hostname=openclaw-vps --ssh`
 3. **Tailscale not installed** — SSH via Hetzner console, run `curl -fsSL https://tailscale.com/install.sh | sh`
 
+### Node key expired — locked out of SSH and web UI
+
+**Symptom**: The browser shows `ERR_NAME_NOT_RESOLVED` for the `*.ts.net` URL and `ssh ubuntu@openclaw-vps` fails with "Could not resolve hostname", **but Telegram still works**. Locally, `tailscale status` lists no `openclaw-vps` peer at all.
+
+That combination means the server is running fine with outbound internet, but has dropped out of the tailnet. Tailscale node keys expire **180 days** after the device authenticates, unless key expiry is disabled. Once expired the node disappears from the netmap, and since the Hetzner firewall has no inbound rules and UFW only allows `tailscale0`, there is no network path left into the machine.
+
+Confirm in the [Tailscale admin console](https://login.tailscale.com/admin/machines): the device is **gone from the machine list entirely** — it is not listed as "Expired". Do not let that mislead you into thinking the device was deleted by hand.
+
+On the server, `journalctl -u tailscaled` records the moment as:
+
+```
+Switching ipn state Running -> NeedsLogin (WantRunning=true, nm=true)
+```
+
+`WantRunning=true` means tailscaled still wanted to be connected — the control plane refused it. That line is the definitive proof of key expiry (observed 2026-08-05 11:00 UTC, exactly 180 days after the server first authenticated).
+
+**Recovery** (needs out-of-band console access — no network path exists):
+
+1. Create a fresh (non-ephemeral) auth key at [Tailscale admin → Keys](https://login.tailscale.com/admin/settings/keys).
+2. In [Hetzner Cloud Console](https://console.hetzner.cloud) → server `openclaw-vps` → **Rescue → Reset root password** (works while the server keeps running), note the password.
+3. Open the **>_ Console** (VNC) on the same page and log in as `root`.
+4. Re-authenticate, keeping the original flags so the hostname stays stable:
+   ```bash
+   tailscale up --authkey=<new-key> --hostname=openclaw-vps --ssh
+   ```
+5. Verify from your machine: `tailscale status` lists the peer again, then SSH and the web UI work.
+
+**Prevent recurrence**: in the Tailscale admin console open the `openclaw-vps` machine → **Disable key expiry**. Cloud-init cannot set this — it is a per-device setting in the admin console, so it must be re-applied after every redeploy.
+
 ### SSH connection refused
 
 **Symptom**: Can ping via Tailscale but SSH fails.
