@@ -39,7 +39,7 @@ openclaw_custom_models:
           name: "Whisper-1"
           input: ["audio"]
 nodejs_major_version: 25
-openclaw_version: "2026.6.11"
+openclaw_version: "2026.7.1-2"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
