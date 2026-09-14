@@ -32,8 +32,12 @@ Gateway runs via systemd (not Docker) as unprivileged user. Docker is used only 
 
 ## Active Model Configuration
 
-**Primary model:** `openai-codex/gpt-5.4` via **ChatGPT Plus OAuth** — no per-token billing, no API key required.
-**Fallback model:** `openai/gpt-5.4-mini` via OpenAI API key.
+**Primary model:** `openai/gpt-5.6-sol` via **ChatGPT Plus OAuth** — no per-token billing, no API key required.
+**Fallback model:** `openai/gpt-5.6-luna` (also via ChatGPT OAuth; also used for heartbeat).
+
+> **Since 2026-09-09** the ChatGPT-account Codex backend rejects `gpt-5.4` and `gpt-5.4-mini` with HTTP 400 *"not supported when using Codex with a ChatGPT account"*. Supported there: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` (live list: `~/.openclaw/agents/main/agent/codex-home/models_cache.json` on the VPS). Since OpenClaw 2026.9.x the `openai/` provider routes chat through the ChatGPT OAuth profile, so an API-key fallback like `openai/gpt-5.4-mini` no longer helps.
+>
+> **Upgrading to 2026.9.x** requires a state DB migration: the gateway exits with status 78 (`audit-events-v2`) until you stop it and run `openclaw doctor --fix --non-interactive`, then `openclaw plugins enable openclaw-mcp-adapter --accept-capabilities`.
 **Voice transcription (STT):** OpenAI Whisper (`whisper-1`) via the same OpenAI API key.
 **Voice output (TTS):** OpenAI `tts-1`, voice `onyx` — agent replies with a Telegram voice bubble when user sends a voice message (`auto: "inbound"`).
 

@@ -3,14 +3,18 @@
 # Secrets are passed via scripts/provision.sh from Pulumi config.
 
 openclaw_timezone: "Europe/Berlin"
-openclaw_model_primary: "openai-codex/gpt-5.4"
+# Since 2026-09-09 the ChatGPT-account Codex backend rejects gpt-5.4 / gpt-5.4-mini
+# ("not supported when using Codex with a ChatGPT account"). Supported there:
+# gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5. Since 2026.9.x the openai
+# provider routes these through the ChatGPT OAuth profile (no more openai-codex/ prefix).
+openclaw_model_primary: "openai/gpt-5.6-sol"
 openclaw_model_fallbacks:
-  - "openai/gpt-5.4-mini"
+  - "openai/gpt-5.6-luna"
+openclaw_heartbeat_model: "openai/gpt-5.6-luna"
 openclaw_thinking_default: "off"
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
-# openai-codex/gpt-5.4 is built-in — no custom model definition needed.
-# The openai provider is kept for fallback / gpt-5.4-nano access.
+# The openai provider is kept for API-key access (gpt-5.4-nano, whisper-1).
 openclaw_custom_models:
   mode: "merge"
   providers:
@@ -39,7 +43,7 @@ openclaw_custom_models:
           name: "Whisper-1"
           input: ["audio"]
 nodejs_major_version: 25
-openclaw_version: "2026.7.1-2"
+openclaw_version: "2026.9.4"
 openclaw_heartbeat_interval: "30m"
 openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (default: 600)
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
