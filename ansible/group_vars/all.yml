@@ -14,34 +14,15 @@ openclaw_heartbeat_model: "openai/gpt-5.6-luna"
 openclaw_thinking_default: "off"
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
-# The openai provider is kept for API-key access (gpt-5.4-nano, whisper-1).
+# Do NOT define models.providers.openai here. An authored openai provider
+# (api: openai-completions + apiKey) forces the OpenClaw runtime with Platform
+# API-key billing and blocks the Codex/ChatGPT-subscription route; forcing
+# agentRuntime codex on top fails closed ("Codex cannot reproduce the prepared
+# provider route"). The OpenAI API key lives in the openai:audio auth profile
+# instead (config role), used only by audio transcription.
 openclaw_custom_models:
   mode: "merge"
-  providers:
-    openai:
-      baseUrl: "https://api.openai.com/v1"
-      # Must be openai-completions (NOT openai-responses):
-      # openai-responses breaks audio transcription — it omits the model parameter
-      # in /v1/audio/transcriptions requests, causing HTTP 400 from OpenAI.
-      # openai-completions works for both gpt-5.4-mini chat fallback AND whisper-1 audio.
-      api: "openai-completions"
-      # apiKey: injected at provision time from Pulumi secret openaiApiKey (optional fallback)
-      models:
-        - id: "gpt-5.4-mini"
-          name: "GPT-5.4-mini"
-          reasoning: false
-          input: ["text"]
-          contextWindow: 200000
-          maxTokens: 8192
-        - id: "gpt-5.4-nano"
-          name: "GPT-5.4-nano"
-          reasoning: false
-          input: ["text"]
-          contextWindow: 128000
-          maxTokens: 4096
-        - id: "whisper-1"
-          name: "Whisper-1"
-          input: ["audio"]
+  providers: {}
 nodejs_major_version: 25
 openclaw_version: "2026.9.4"
 openclaw_heartbeat_interval: "30m"
@@ -49,11 +30,10 @@ openclaw_agent_timeout_seconds: 1500  # 25 minutes per conversation turn (defaul
 openclaw_cooldown_failure_window_hours: 1  # reset cooldown error count after 1h (default: 24)
 openclaw_elevated_default: "off"
 
-# Voice transcription (OpenAI Whisper)
-# Uses the openai provider (api: "openai-completions").
-# NOTE: api: "openai-responses" breaks audio — omits model param → HTTP 400.
+# Voice transcription (OpenAI) via the dedicated openai:audio API-key profile,
+# so chat stays on ChatGPT OAuth (see docs/nodes/audio.md in the openclaw package).
 openclaw_audio_provider: "openai"
-openclaw_audio_model: "whisper-1"
+openclaw_audio_model: "gpt-4o-transcribe"
 
 # Voice output (text-to-speech)
 # auto: "inbound" = Agent antwortet mit Sprache nur wenn Nutzer Sprachnachricht schickt

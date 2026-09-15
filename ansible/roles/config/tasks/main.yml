@@ -14,10 +14,9 @@
     - content: "{{ groq_api_key | default('') }}"
       dest: /tmp/ansible-groq-api-key
     - content: >-
-        {%- set _openai_key = {'providers': {'openai': {'apiKey': openai_api_key}}} if (openai_api_key is defined and openai_api_key | length > 0) else {} -%}
         {%- set _groq = {'providers': {'groq': {'baseUrl': openclaw_groq_base_url, 'apiKey': groq_api_key, 'models': []}}} if (groq_api_key is defined and groq_api_key | length > 0) else {} -%}
         {%- set _google = {'providers': {'google': {'baseUrl': 'https://generativelanguage.googleapis.com/v1beta', 'apiKey': gemini_api_key, 'models': []}}} if (gemini_api_key is defined and gemini_api_key | length > 0) else {} -%}
-        {{ openclaw_custom_models | combine(_openai_key, recursive=true) | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
+        {{ openclaw_custom_models | combine(_groq, recursive=true) | combine(_google, recursive=true) | to_json }}
       dest: /tmp/ansible-custom-models
     - content: "{{ openclaw_model_fallbacks | to_json }}"
       dest: /tmp/ansible-model-fallbacks
@@ -27,6 +26,29 @@
             'prompt': openclaw_compaction_memory_flush_prompt,
             'systemPrompt': openclaw_compaction_memory_flush_system_prompt} | to_json }}
       dest: /tmp/ansible-compaction-memoryflush
+
+# Keep chat on the ChatGPT/Codex OAuth profile and give audio its own API-key
+# profile. Never put the key into models.providers.openai (see all.yml).
+# Only creates the profile once; to rotate the key, logout openai:audio first.
+- name: Configure OpenAI API-key auth profile for audio transcription
+  when: openai_api_key is defined and openai_api_key | length > 0
+  no_log: true
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export XDG_RUNTIME_DIR=/run/user/1000
+    if openclaw models auth list --agent main --provider openai 2>/dev/null | grep -q "openai:audio"; then
+        echo "OK"; exit 0
+    fi
+    printf '%s' "$OPENAI_KEY" | openclaw models auth paste-api-key --agent main --provider openai --profile-id openai:audio >/dev/null
+    openclaw models auth order set --agent main --provider openai openai:default openai:audio >/dev/null
+    echo "CHANGED"
+  environment:
+    OPENAI_KEY: "{{ openai_api_key }}"
+  args:
+    executable: /bin/bash
+  register: openai_audio_profile
+  changed_when: "'CHANGED' in openai_audio_profile.stdout"
+  notify: restart openclaw-gateway
 
 - name: Configure gateway with secret cleanup
   block:
@@ -109,11 +131,13 @@
 
         # Voice transcription cleanup
         {% if not (openai_api_key is defined and openai_api_key | length > 0) %}
-        for key in tools.media.audio.enabled tools.media.audio.models; do
+        for key in tools.media.audio.enabled tools.media.audio.models tools.media.models; do
             check_unset "$key"
         done
         {% endif %}
         # Legacy provider cleanup
+        # An authored openai provider forces API-key billing for chat (see all.yml)
+        openclaw config unset models.providers.openai 2>/dev/null || true
         {% if not (groq_api_key is defined and groq_api_key | length > 0) %}
         openclaw config unset models.providers.groq 2>/dev/null || true
         {% endif %}
@@ -451,7 +475,7 @@
         # Voice transcription — enable audio (OpenAI Whisper; cleanup in secrets task)
         {% if openai_api_key is defined and openai_api_key | length > 0 %}
         check_set tools.media.audio.enabled true
-        check_set_json tools.media.audio.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}"}]'
+        check_set_json tools.media.models '[{"provider":"{{ openclaw_audio_provider }}","model":"{{ openclaw_audio_model }}","profile":"openai:audio","baseUrl":"https://api.openai.com/v1","capabilities":["audio"]}]'
         {% endif %}
 
         # Voice output (text-to-speech) — responds with voice when user sends voice message
