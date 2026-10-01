@@ -24,7 +24,7 @@ openclaw_custom_models:
   mode: "merge"
   providers: {}
 nodejs_major_version: 25
-openclaw_version: "2026.9.4"
+openclaw_version: "2026.9.7"
 # Host Claude Code CLI: the claude-cli model runtime and plugin management share
 # one pinned install (@anthropic-ai/claude-code). Update intentionally.
 claude_code_version: "2.1.97"
