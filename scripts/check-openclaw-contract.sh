@@ -6,6 +6,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ALL_VARS="$REPO_DIR/ansible/group_vars/all.yml"
 DOCS_REVIEW="$REPO_DIR/docs/DOCS-REVIEW.md"
 AGENTS_TASKS="$REPO_DIR/ansible/roles/agents/tasks/main.yml"
+HEARTBEAT_TASKS="$REPO_DIR/ansible/roles/agents/tasks/heartbeat.yml"
 CONFIG_TASKS="$REPO_DIR/ansible/roles/config/tasks/main.yml"
 CRON_TASKS="$REPO_DIR/ansible/roles/telegram/tasks/cron.yml"
 CRON_RECONCILER="$REPO_DIR/ansible/roles/telegram/files/reconcile_openclaw_cron.py"
@@ -34,6 +35,11 @@ grep -q 'agents.defaults.heartbeat.*0m\|every.*0m' "$AGENTS_TASKS" || fail "agen
 if grep -q 'agents.defaults.heartbeat' "$CONFIG_TASKS"; then
     fail "config role still writes heartbeat state; agents must be the sole owner"
 fi
+if grep -rnE 'agents\.list\.|\.agents\.list\b' "$REPO_DIR/ansible/roles" >/dev/null; then
+    fail "a role still addresses agents.list; since 2026.9 agents live under agents.entries.<id>"
+fi
+grep -Fq 'agents.entries.{{ _heartbeat_agent.id }}.heartbeat' "$HEARTBEAT_TASKS" \
+    || fail "heartbeat task does not write agents.entries.<id>.heartbeat"
 grep -q 'cron list --all --json' "$CRON_TASKS" || fail "cron role does not list disabled jobs"
 grep -q '"--disabled"' "$CRON_RECONCILER" || fail "cron reconciler cannot create disabled jobs"
 grep -q '"--enable"' "$CRON_RECONCILER" || fail "cron reconciler cannot enable jobs in place"
@@ -53,15 +59,17 @@ if [ "$CHECK_LATEST_DOCS" = true ]; then
     curl -fsSL --retry 3 "$LATEST_BASE/automation/cron-jobs.md" -o "$DOCS_TMP/latest-cron.md" \
         || fail "could not fetch latest cron docs"
 
-    grep -Fq 'agents.list[]' "$DOCS_TMP/pinned-heartbeat.md" \
-        || fail "pinned heartbeat docs no longer describe agents.list[]; re-review the v$IAC_VERSION contract"
-    grep -Fq 'openclaw cron list' "$DOCS_TMP/pinned-cron.md" \
-        || fail "pinned cron docs no longer describe the v$IAC_VERSION cron CLI"
+    grep -Fq 'agents.entries.*.heartbeat' "$DOCS_TMP/pinned-heartbeat.md" \
+        || fail "pinned heartbeat docs no longer describe agents.entries.*.heartbeat; re-review the v$IAC_VERSION contract"
+    grep -Fq 'openclaw cron list --all' "$DOCS_TMP/pinned-heartbeat.md" \
+        || fail "pinned heartbeat docs no longer use cron list --all; re-review the v$IAC_VERSION contract"
+    grep -Fq '`openclaw cron` remains an alias' "$DOCS_TMP/pinned-cron.md" \
+        || fail "pinned scheduler docs no longer keep openclaw cron as an alias; the cron role needs review"
     grep -Fq 'agents.entries.*.heartbeat' "$DOCS_TMP/latest-heartbeat.md" \
         || fail "latest heartbeat docs drifted beyond the known agents.entries contract; review required"
     grep -Fq 'openclaw automations list' "$DOCS_TMP/latest-cron.md" \
         || fail "latest scheduler docs drifted beyond the known automations CLI; review required"
-    echo "Latest docs drift is still the reviewed agents.entries + automations contract"
+    echo "Latest docs still match the reviewed agents.entries + automations contract"
 fi
 
 if [ -n "${OPENCLAW_CONTRACT_HOST:-}" ]; then

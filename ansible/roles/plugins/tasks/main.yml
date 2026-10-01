@@ -2157,9 +2157,10 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: Get agent list for index resolution
+# Since 2026.9 agents are keyed by id under agents.entries (agents.list is gone).
+- name: Get configured agent entries for deny rules
   ansible.builtin.shell: |
-    jq -c '.agents.list // []' /home/ubuntu/.openclaw/openclaw.json
+    jq -c '.agents.entries // {}' /home/ubuntu/.openclaw/openclaw.json
   args:
     executable: /bin/bash
   register: agents_list_json
@@ -2176,20 +2177,18 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
-    AGENTS_JSON=$(cat /tmp/ansible-agents-list.json)
-    AGENT_INDEX=$(echo "$AGENTS_JSON" | jq -r 'to_entries[] | select(.value.id == "{{ item.id }}") | .key')
-    if [ -z "$AGENT_INDEX" ]; then
-        echo "SKIP: Agent '{{ item.id }}' not found in agents list"
+    if ! jq -e --arg id {{ item.id | quote }} 'has($id)' /tmp/ansible-agents-list.json >/dev/null; then
+        echo "SKIP: Agent '{{ item.id }}' not found in agents.entries"
         exit 0
     fi
-    CURRENT=$(jq -c ".agents.list[${AGENT_INDEX}].tools.deny // []" /home/ubuntu/.openclaw/openclaw.json 2>/dev/null) || CURRENT="[]"
+    CURRENT=$(jq -c --arg id {{ item.id | quote }} '.[$id].tools.deny // []' /tmp/ansible-agents-list.json 2>/dev/null) || CURRENT="[]"
     DESIRED='{{ deny_list | to_json }}'
     C_NORM=$(echo "$CURRENT" | jq -cS 'sort' 2>/dev/null || echo "PARSE_FAIL")
     D_NORM=$(echo "$DESIRED" | jq -cS 'sort')
     if [ "$C_NORM" != "PARSE_FAIL" ] && [ "$C_NORM" = "$D_NORM" ]; then
         echo "OK"
     else
-        openclaw config set "agents.list.${AGENT_INDEX}.tools.deny" --json "$DESIRED"
+        openclaw config set "agents.entries.{{ item.id }}.tools.deny" --json "$DESIRED"
         echo "UPDATED"
     fi
   args:
