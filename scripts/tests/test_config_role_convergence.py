@@ -194,7 +194,11 @@ class ConfigRoleConvergenceTests(unittest.TestCase):
             }
             sessions.write_text(json.dumps(original))
             sessions.chmod(0o640)
-            result = self.run_task([self.migrate, self.migrate_report], root)
+            # Pin a Claude CLI primary here: the scenario is independent of the
+            # deployment's own primary model in group_vars.
+            primary = {'openclaw_model_primary': 'anthropic/claude-sonnet-4-6',
+                       'openclaw_agent_models': {'anthropic/claude-sonnet-4-6': {'agentRuntime': {'id': 'claude-cli'}}}}
+            result = self.run_task([self.migrate, self.migrate_report], root, primary)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             migrated = json.loads(sessions.read_text())
             self.assertEqual(sessions.stat().st_mode & 0o777, 0o640)
@@ -205,7 +209,7 @@ class ConfigRoleConvergenceTests(unittest.TestCase):
             self.assertEqual(json.loads(calls[0][1]), original)
             self.assertEqual(json.loads(calls[1][1]), migrated)
             (root / 'systemctl').unlink()
-            primary_provider, primary_model = self.defaults['openclaw_model_primary'].split('/', 1)
+            primary_provider, primary_model = primary['openclaw_model_primary'].split('/', 1)
             self.assertEqual(migrated['runtime'], original['runtime'])
             self.assertEqual(migrated['canonical'], original['canonical'])
             self.assertEqual(migrated['foreign'], {'modelProvider': primary_provider, 'model': primary_model})
@@ -213,7 +217,7 @@ class ConfigRoleConvergenceTests(unittest.TestCase):
             # The run names what it moved (agent and old provider), never content.
             self.assertIn('MIGRATED: main (openai)', result.stdout)
             # A second pass has nothing left to migrate.
-            result = self.run_task([self.migrate, self.migrate_report], root)
+            result = self.run_task([self.migrate, self.migrate_report], root, primary)
             self.assertRegex(result.stdout, r'localhost\s+: ok=1\s+changed=0 ')
             self.assertFalse((root / 'systemctl').exists(), 'gateway touched with nothing to migrate')
 

@@ -37,6 +37,10 @@ def replace_paths(value, root):
     return value
 
 
+# This fork keeps its own plugins role (Gmail/Google MCP servers, adapter
+# registration patches) instead of upstream's 2026-09 maintenance rewrite that
+# these tests describe (stopped-gateway install, private token files).
+@unittest.skip("tests upstream's plugins role rewrite; this fork keeps its own plugins role")
 class PluginConfigTransportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
