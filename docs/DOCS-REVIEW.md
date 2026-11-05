@@ -2,7 +2,7 @@
 
 Tracking which [OpenClaw docs](https://docs.openclaw.ai) pages have been reviewed against our setup.
 
-- Reviewed OpenClaw version: `2026.9.7`
+- Reviewed OpenClaw version: `2026.10.10`
 - Reviewed on: `2026-10-01`
 - Latest docs compared on: `2026-10-01`
 
