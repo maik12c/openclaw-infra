@@ -289,4 +289,7 @@ Notfall ohne Ansible: `~/backups/openclaw.json.pre-gworkspace` zurückkopieren,
   (`version`, `exclude_newer`, Tool-Liste aus `core/tool_tiers.yaml` gegenprüfen).
 - Ob der Adapter die Env des Kindprozesses ersetzt oder ergänzt, ist nicht geprüft; `HOME` und `PATH`
   sind deshalb gesetzt.
-- Ansible-Syntax und Repo-Tests sind geprüft, ein echter Lauf gegen einen Host nicht.
+- Geprüft (Linux-Container, wie CI): Playbook-Syntax, `check-task-syntax.sh`,
+  `check-openclaw-contract.sh`, `test-scheduled-automation.sh`, shellcheck, Unittests, dazu ein
+  Render-Test aller vier Schalterkombinationen. Zwei Fehler in `test_session_cleanup` treten auch auf
+  dem Stand vor dieser Änderung auf. Ein echter Lauf gegen einen Host fehlt.
