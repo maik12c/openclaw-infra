@@ -2142,7 +2142,7 @@
     # Google Workspace servers (workspace-mcp, stdio). HOME/PATH are explicit in
     # case the adapter replaces rather than merges the child environment.
     # Client secrets come from a
-    # 0600 file; user tokens are written by workspace-mcp itself after Maik's
+    # 0600 file; user tokens are written by workspace-mcp itself after the
     # one-time OAuth consent (see docs/GOOGLE-WORKSPACE-MCP-ROLLOUT.md).
     GWS_BINARY="/home/ubuntu/.local/bin/workspace-mcp"
     GWS_HOME="{{ google_workspace_mcp.home_dir }}"
