@@ -7,6 +7,21 @@
 # Since the 2026.6.x plugin split, `openclaw plugins install` places packages under
 # ~/.openclaw/npm/projects/<slug>/node_modules/... — search the whole npm tree so
 # both the legacy and the new layout are found.
+
+# Effective contracts.tools / sandbox allowlist entries. Follows the Google
+# migration switches (google_mcp_legacy_enabled, google_workspace_mcp_enabled)
+# through the generated server list, so a disabled type contributes no names.
+- name: Compute MCP adapter contract tool names
+  ansible.builtin.set_fact:
+    _mcp_contract_tools: >-
+      {{ openclaw_mcp_adapter.contract_tools
+         + (openclaw_mcp_adapter.contract_tools_google_legacy | default([])
+            if (_openclaw_mcp_servers | selectattr('type', 'in', ['gmail', 'gdrive', 'gcal']) | list | length > 0)
+            else [])
+         + ((google_workspace_mcp.tools | map('regex_replace', '^', 'gworkspace_') | list)
+            if (_openclaw_mcp_servers | selectattr('name', 'equalto', 'gworkspace') | list | length > 0)
+            else []) }}
+
 - name: Check if mcp-adapter plugin directory exists
   ansible.builtin.shell: find /home/ubuntu/.openclaw/npm -name "index.js" -path "*openclaw-mcp-adapter/dist*" 2>/dev/null | head -1
   register: plugin_dir_find
@@ -119,7 +134,7 @@
         print('PATCHED')
         " "$MANIFEST"
       environment:
-        CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
+        CONTRACTS: "{{ _mcp_contract_tools | to_json }}"
       args:
         executable: /bin/bash
       register: manifest_contracts_patch
@@ -248,7 +263,7 @@
             print('OK')
         "
       environment:
-        CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
+        CONTRACTS: "{{ _mcp_contract_tools | to_json }}"
       args:
         executable: /bin/bash
       register: allowlist_result
@@ -299,7 +314,7 @@
     print('PATCHED')
     " "$MANIFEST"
   environment:
-    CONTRACTS: "{{ openclaw_mcp_adapter.contract_tools | to_json }}"
+    CONTRACTS: "{{ _mcp_contract_tools | to_json }}"
   args:
     executable: /bin/bash
   register: manifest_contracts_idempotent
@@ -405,6 +420,11 @@
     line: 'export PATH="$HOME/.npm-global/bin:$PATH"'
     state: present
 
+# Set before the npm/patch tasks below — the gcal patch task reads it.
+- name: Set npm prefix bin path fact
+  ansible.builtin.set_fact:
+    npm_prefix_bin: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin"
+
 - name: Determine which npm packages to install
   ansible.builtin.set_fact:
     mcp_npm_packages: >-
@@ -413,7 +433,9 @@
          | reject('equalto', 'node-exec-mcp')
          | list
          + (['@openai/codex'] if (codex_auth_json | default('') | length > 0) else [])
-         + (['node-exec-mcp'] if (node_exec_enabled | default(false)) else []) }}
+         + (['node-exec-mcp'] if (node_exec_enabled | default(false)) else [])
+         + ((openclaw_mcp_adapter.npm_packages_google_legacy | default([]))
+            if (google_mcp_legacy_enabled | default(true) | bool) else []) }}
 
 - name: Install MCP server npm packages globally
   community.general.npm:
@@ -424,6 +446,22 @@
     PATH: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin:{{ ansible_facts['env']['PATH'] }}"
   loop: "{{ mcp_npm_packages }}"
 
+# Only after the switch to gworkspace and only on explicit opt-in: rollback
+# restores these from the npm-global backup tarball, not from the registry.
+- name: Remove legacy Google MCP npm packages
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: absent
+  environment:
+    PATH: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin:{{ ansible_facts['env']['PATH'] }}"
+  loop: "{{ openclaw_mcp_adapter.npm_packages_google_legacy | default([]) }}"
+  when:
+    - not (google_mcp_legacy_enabled | default(true) | bool)
+    - google_mcp_legacy_uninstall | default(false) | bool
+
+# Applies only to the legacy gcal type: skipped once google_mcp_legacy_enabled
+# is false, because the playbook then generates no gcal servers.
 - name: Patch mcp-google-calendar to support timed events (dateTime + timeZone)
   # mcp-google-calendar v0.0.5 hardcodes { date: event.start } which forces all-day events.
   # This patch adds conditional dateTime/date logic and exposes timeZone in the schema.
@@ -694,10 +732,6 @@
       qmd binary not found but qmd servers are configured in group_vars.
       Run the qmd role first: ./scripts/provision.sh --tags qmd,plugins
   when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'qmd') | list | length > 0
-
-- name: Set npm prefix bin path fact
-  ansible.builtin.set_fact:
-    npm_prefix_bin: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin"
 
 - name: Resolve node-exec-mcp binary path
   ansible.builtin.shell: |
@@ -1568,6 +1602,109 @@
   failed_when: false
   when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gcontacts') | list | length > 0
 
+# --- Google Workspace MCP (workspace-mcp, replaces gmail/gdrive/gcal) ---
+# uv comes from the pinned, checksum-verified GitHub release (Ubuntu 24.04 has
+# no uv package). workspace-mcp is installed once with `uv tool install` at a
+# fixed version instead of `uvx` on every start: no registry lookup when the
+# gateway spawns the server, and the same artifact on every run.
+- name: Install Google Workspace MCP (uv + workspace-mcp)
+  when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'gworkspace') | list | length > 0
+  block:
+    - name: Check installed uv version
+      ansible.builtin.shell: |
+        /home/ubuntu/.local/bin/uv --version 2>/dev/null | awk '{print $2}' || true
+      args:
+        executable: /bin/bash
+      register: uv_installed_version
+      changed_when: false
+      check_mode: false
+
+    - name: Install uv {{ uv_version }} from GitHub release
+      when: (uv_installed_version.stdout | trim) != uv_version
+      block:
+        - name: Create uv download directory
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: uv
+          register: uv_tmp
+
+        - name: Download uv release archive (checksum-verified)
+          ansible.builtin.get_url:
+            url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ ansible_facts['architecture'] }}-unknown-linux-gnu.tar.gz"
+            dest: "{{ uv_tmp.path }}/uv.tar.gz"
+            checksum: "sha256:{{ uv_sha256[ansible_facts['architecture']] }}"
+            mode: "0600"
+
+        - name: Unpack uv archive
+          ansible.builtin.unarchive:
+            src: "{{ uv_tmp.path }}/uv.tar.gz"
+            dest: "{{ uv_tmp.path }}"
+            remote_src: true
+
+        - name: Ensure ~/.local/bin exists
+          ansible.builtin.file:
+            path: /home/ubuntu/.local/bin
+            state: directory
+            mode: "0755"
+
+        - name: Install uv and uvx binaries
+          ansible.builtin.copy:
+            src: "{{ uv_tmp.path }}/uv-{{ ansible_facts['architecture'] }}-unknown-linux-gnu/{{ item }}"
+            dest: "/home/ubuntu/.local/bin/{{ item }}"
+            remote_src: true
+            mode: "0755"
+          loop: [uv, uvx]
+
+      always:
+        - name: Remove uv download directory
+          ansible.builtin.file:
+            path: "{{ uv_tmp.path }}"
+            state: absent
+          when: uv_tmp.path is defined
+
+    - name: Install workspace-mcp {{ google_workspace_mcp.version }} as a uv tool
+      ansible.builtin.shell: |
+        set -euo pipefail
+        UV=/home/ubuntu/.local/bin/uv
+        WANT="{{ google_workspace_mcp.version }}"
+        HAVE=$("$UV" tool list 2>/dev/null | awk '$1 == "workspace-mcp" {print $2}' | sed 's/^v//')
+        if [ "$HAVE" = "$WANT" ] && [ -x /home/ubuntu/.local/bin/workspace-mcp ]; then
+            echo "OK"
+            exit 0
+        fi
+        "$UV" tool install --force --python 3.12 \
+            --exclude-newer "{{ google_workspace_mcp.exclude_newer }}" \
+            "workspace-mcp==$WANT"
+        echo "INSTALLED"
+      args:
+        executable: /bin/bash
+      environment:
+        UV_NO_PROGRESS: "1"
+      register: workspace_mcp_install
+      changed_when: "'INSTALLED' in workspace_mcp_install.stdout"
+
+    - name: Ensure workspace-mcp directories exist (owner-only)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ google_workspace_mcp.home_dir }}"
+        - "{{ google_workspace_mcp.home_dir }}/credentials"
+
+    # Client ID/secret live in a 0600 file referenced by GOOGLE_CLIENT_SECRET_PATH,
+    # not in the adapter env, so they never land in openclaw.json.
+    # Same OAuth client as the legacy servers (gmail_client_id/secret).
+    - name: Write workspace-mcp OAuth client secrets file
+      ansible.builtin.copy:
+        content: "{{ {'installed': {'client_id': gmail_client_id, 'client_secret': gmail_client_secret, 'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token', 'redirect_uris': ['http://localhost']}} | to_json }}"
+        dest: "{{ google_workspace_mcp.home_dir }}/client_secret.json"
+        mode: "0600"
+      no_log: true
+      when:
+        - gmail_client_id | default('') | length > 0
+        - gmail_client_secret | default('') | length > 0
+
 - name: Validate token variable names are defined
   ansible.builtin.assert:
     that:
@@ -1998,6 +2135,49 @@
     {% endfor %}
     else
         echo "NOTE: Skipping Google Contacts MCP servers (token='$([ -f /home/ubuntu/.gcontacts-mcp/token.json ] && echo found || echo missing)', binary='${GCONTACTS_BINARY}')" >&2
+    fi
+    {% endif %}
+
+    {% if _openclaw_mcp_servers | selectattr('type', 'equalto', 'gworkspace') | list | length > 0 %}
+    # Google Workspace servers (workspace-mcp, stdio). HOME/PATH are explicit in
+    # case the adapter replaces rather than merges the child environment.
+    # Client secrets come from a
+    # 0600 file; user tokens are written by workspace-mcp itself after Maik's
+    # one-time OAuth consent (see docs/GOOGLE-WORKSPACE-MCP-ROLLOUT.md).
+    GWS_BINARY="/home/ubuntu/.local/bin/workspace-mcp"
+    GWS_HOME="{{ google_workspace_mcp.home_dir }}"
+    GWS_ARGS='{{ (["--permissions"] + google_workspace_mcp.permissions
+                 + ["--tool-tier", google_workspace_mcp.tool_tier]
+                 + ((["--disabled-tools"] + google_workspace_mcp.disabled_tools)
+                    if (google_workspace_mcp.disabled_tools | length > 0) else [])) | to_json }}'
+    GWS_ENV=$(jq -n \
+        --arg secrets "$GWS_HOME/client_secret.json" \
+        --arg creds "$GWS_HOME/credentials" \
+        --arg host "{{ google_workspace_mcp.host }}" \
+        --arg port "{{ google_workspace_mcp.port }}" \
+        --arg email "{{ google_workspace_user_email | default('') }}" \
+        --arg attach "{{ google_workspace_mcp.attachment_dir | default('') }}" \
+        '{HOME: "/home/ubuntu",
+          PATH: "/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin",
+          GOOGLE_CLIENT_SECRET_PATH: $secrets,
+          WORKSPACE_MCP_CREDENTIALS_DIR: $creds,
+          WORKSPACE_MCP_HOST: $host,
+          WORKSPACE_MCP_PORT: $port,
+          WORKSPACE_MCP_TRANSPORT: "stdio",
+          MCP_SINGLE_USER_MODE: "1",
+          NO_COLOR: "1"}
+         + (if $email != "" then {USER_GOOGLE_EMAIL: $email} else {} end)
+         + (if $attach != "" then {WORKSPACE_ATTACHMENT_DIR: $attach} else {} end)')
+    if [ -f "$GWS_HOME/client_secret.json" ] && [ -x "$GWS_BINARY" ]; then
+    {% for srv in _openclaw_mcp_servers | selectattr('type', 'equalto', 'gworkspace') %}
+        SERVERS=$(echo "$SERVERS" | jq --arg name "{{ srv.name }}" \
+            --arg cmd "$GWS_BINARY" \
+            --argjson args "$GWS_ARGS" \
+            --argjson env "$GWS_ENV" \
+            '. + [{name: $name, transport: "stdio", command: $cmd, args: $args, env: $env}]')
+    {% endfor %}
+    else
+        echo "NOTE: Skipping Google Workspace MCP servers (client_secret='$([ -f "$GWS_HOME/client_secret.json" ] && echo found || echo missing)', binary='$([ -x "$GWS_BINARY" ] && echo found || echo missing)')" >&2
     fi
     {% endif %}
 

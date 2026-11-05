@@ -183,10 +183,13 @@ openclaw_mcp_adapter:
     - "@modelcontextprotocol/server-github"
     - "@openai/codex"
     - "node-exec-mcp"
+    - "google-contacts-mcp"
+  # Legacy Google servers (gmail/gdrive/gcal). Installed only while
+  # google_mcp_legacy_enabled is true — see google_workspace_mcp below.
+  npm_packages_google_legacy:
     - "@gongrzhe/server-gmail-autoauth-mcp"
     - "@modelcontextprotocol/server-gdrive"
     - "mcp-google-calendar"
-    - "google-contacts-mcp"
   tool_prefix: true
   codex_sandbox: "workspace-write"
   codex_approval: "never"
@@ -210,9 +213,20 @@ openclaw_mcp_adapter:
   # includes adapter tools in agent bundles (resolvePluginToolRuntimePluginIds).
   # github/qmd/pi/claude-code tools load via descriptor cache and don't need this.
   # Update when adding new MCP server types.
+  # The plugins role builds the effective list (_mcp_contract_tools) from
+  # contract_tools + contract_tools_google_legacy (while the legacy switch is on)
+  # + gworkspace_<tool> for google_workspace_mcp.tools (while that switch is on).
   contract_tools:
     - codex_codex
     - codex_codex-reply
+    - gcontacts_contacts_list
+    - gcontacts_contact_get
+    - gcontacts_contact_search
+    - gcontacts_contact_create
+    - gcontacts_contact_update
+    - gcontacts_contact_delete
+    - gcontacts_directory_search
+  contract_tools_google_legacy:
     - gmail_send_email
     - gmail_draft_email
     - gmail_read_email
@@ -239,13 +253,6 @@ openclaw_mcp_adapter:
     - gcal_get_calendar_event
     - gcal_edit_calendar_event
     - gcal_delete_calendar_event
-    - gcontacts_contacts_list
-    - gcontacts_contact_get
-    - gcontacts_contact_search
-    - gcontacts_contact_create
-    - gcontacts_contact_update
-    - gcontacts_contact_delete
-    - gcontacts_directory_search
   # Note: MCP servers are auto-generated from openclaw_agents × openclaw_mcp_server_types
   # in playbook.yml pre_tasks. The 'servers' key was removed — see _openclaw_mcp_servers.
 
@@ -273,6 +280,90 @@ openclaw_mcp_server_types:
     name_prefix: "gcal"
   - type: "gcontacts"
     name_prefix: "gcontacts"
+  - type: "gworkspace"
+    name_prefix: "gworkspace"
+
+# --- Google MCP migration (see docs/GOOGLE-WORKSPACE-MCP-ROLLOUT.md) ---
+# Two independent switches so old and new can run side by side during rollout.
+# The playbook drops disabled types from openclaw_mcp_server_types before the
+# agents × types cross-product, so no server, deny rule or contract tool of a
+# disabled type is generated.
+#   legacy (gmail/gdrive/gcal npm servers) — archived/deprecated/unmaintained
+#   gworkspace (workspace-mcp, Python via uv) — the replacement
+google_mcp_legacy_enabled: true
+google_workspace_mcp_enabled: false
+# Remove the legacy npm packages once legacy is off. Separate opt-in because
+# rollback must restore them from the npm-global backup tarball: a fresh
+# install of mcp-google-calendar pulls a newer zod and OpenClaw loses its tools.
+google_mcp_legacy_uninstall: false
+
+# uv (Python tool runner) from the official GitHub release, checksum-verified.
+uv_version: "0.13.5"
+uv_sha256:
+  x86_64: "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f"
+  aarch64: "4bb69cf95ed13f23713bb7bc09f241896ea0c75b7c557e615a20604b82f9c403"
+
+google_workspace_mcp:
+  version: "2.3.0"
+  # Resolve transitive dependencies as they were at the 2.3.0 release
+  # (2026-10-30) so a reinstall does not silently pick up newer libraries.
+  exclude_newer: "2026-10-31T00:00:00Z"
+  # Least privilege: --permissions picks services and scopes in one go.
+  # gmail:full = read, labels/modify, drafts, send, filters (gmail.settings.basic);
+  #   no https://mail.google.com/ scope, so no permanent delete (trash via label).
+  # drive:readonly matches the old gdrive server (search/read only).
+  permissions:
+    - "gmail:full"
+    - "drive:readonly"
+    - "calendar:full"
+  tool_tier: "complete"
+  disabled_tools: []
+  # Loopback-only OAuth callback / attachment server (stdio mode starts it lazily).
+  # Default bind would be 0.0.0.0, which UFW lets through on tailscale0.
+  host: "127.0.0.1"
+  port: 8000
+  home_dir: "/home/ubuntu/.google_workspace_mcp"
+  # Empty = upstream default (~/.workspace-mcp/attachments, host only; the
+  # sandbox cannot read it, the agent uses return_base64 instead). A path inside
+  # the workspace would make attachments visible to the sandbox, but also push
+  # them through workspace Git sync and Obsidian Sync.
+  attachment_dir: ""
+  # Tools workspace-mcp 2.3.0 registers for the permissions + tier above
+  # (derived from core/tool_tiers.yaml and each tool's required scopes).
+  # Registered in the adapter manifest as gworkspace_<name>. Update together
+  # with version/permissions/tool_tier.
+  tools:
+    - search_gmail_messages
+    - get_gmail_message_content
+    - get_gmail_messages_content_batch
+    - send_gmail_message
+    - get_gmail_attachment_content
+    - get_gmail_thread_content
+    - get_gmail_threads_content_batch
+    - modify_gmail_message_labels
+    - batch_modify_gmail_message_labels
+    - list_gmail_labels
+    - manage_gmail_label
+    - draft_gmail_message
+    - list_gmail_filters
+    - manage_gmail_filter
+    - start_google_auth
+    - search_drive_files
+    - get_drive_file_content
+    - get_drive_file_download_url
+    - get_drive_shareable_link
+    - list_drive_items
+    - get_drive_file_permissions
+    - check_drive_file_public_access
+    - list_calendars
+    - get_events
+    - manage_event
+    - create_calendar
+    - query_freebusy
+    - manage_out_of_office
+    - manage_focus_time
+# Google account the agent acts as (USER_GOOGLE_EMAIL). Set in openclaw.yml.
+google_workspace_user_email: ""
 
 # Claude Code plugins installed into the VPS agents' `claude` CLI.
 #

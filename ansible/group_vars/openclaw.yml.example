@@ -210,7 +210,17 @@
 #     - "feature-dev"
 #     - "astral@astral-sh"
 
+# --- Google MCP migration (docs/GOOGLE-WORKSPACE-MCP-ROLLOUT.md) ---
+# Phase 1 (side by side):  legacy true,  workspace true
+# Phase 2 (switched):      legacy false, workspace true
+# Rollback:                legacy true,  workspace false
+# google_mcp_legacy_enabled: true
+# google_workspace_mcp_enabled: false
+# google_mcp_legacy_uninstall: false
+# google_workspace_user_email: "you@gmail.com"
+
 # --- Advanced: manual overrides for auto-generated config ---
+# Note: a manual openclaw_mcp_servers list bypasses the Google migration switches.
 # The following variables are normally auto-generated from openclaw_agents.
 # Define them here ONLY if you need non-standard naming or custom server configurations.
 #

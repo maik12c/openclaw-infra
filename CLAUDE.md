@@ -153,6 +153,7 @@ openclaw-infra/
     ├── AUTONOMOUS-SAFETY.md         # Multi-agent safety architecture design
     ├── BROWSER-CONTROL-PLANNING.md  # Future browser automation approaches
     ├── DOCS-REVIEW.md               # Official docs review tracking
+    ├── GOOGLE-WORKSPACE-MCP-ROLLOUT.md  # gmail/gdrive/gcal → workspace-mcp: switches, tool map, rollback
     ├── INTEGRATIONS.md              # Telegram, WhatsApp, Discord, Obsidian setup detail
     ├── NODE-EXEC.md                 # Remote Mac node host: setup, config, operations
     ├── SECURITY.md                  # Threat model

@@ -146,6 +146,14 @@
       when: openclaw_mcp_servers is not defined
       tags: [always]
 
+    # Google MCP migration switches: drop disabled types before the cross-product.
+    - name: Determine disabled MCP server types (Google migration switches)
+      ansible.builtin.set_fact:
+        _openclaw_disabled_mcp_types: >-
+          {{ ([] if (google_mcp_legacy_enabled | default(true) | bool) else ['gmail', 'gdrive', 'gcal'])
+             + ([] if (google_workspace_mcp_enabled | default(false) | bool) else ['gworkspace']) }}
+      tags: [always]
+
     - name: Auto-generate MCP servers from server types × agents
       ansible.builtin.set_fact:
         _openclaw_mcp_servers: "{{ _openclaw_mcp_servers + [_entry] }}"
@@ -157,7 +165,10 @@
           {{ {'name': _name, 'type': item.0.type, 'agent_id': item.1.id}
              | combine({'cwd': _cwd} if item.0.type in ['codex', 'claude-code', 'pi', 'qmd'] else {})
              | combine({'token_var': _token_var} if item.0.type == 'github' else {}) }}
-      loop: "{{ openclaw_mcp_server_types | product(openclaw_agents) | list }}"
+      loop: >-
+        {{ openclaw_mcp_server_types
+           | rejectattr('type', 'in', _openclaw_disabled_mcp_types)
+           | product(openclaw_agents) | list }}
       loop_control:
         label: "{{ _name }}"
       when: openclaw_mcp_servers is not defined
