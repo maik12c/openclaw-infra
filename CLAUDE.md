@@ -44,7 +44,7 @@ Gateway runs via systemd (not Docker) as unprivileged user. Docker runs sandbox 
 
 | Surface | Model | Runtime | Auth profile | Billing |
 |---------|-------|---------|--------------|---------|
-| Chat, cron | `openai/gpt-5.6-sol`, fallback `openai/gpt-5.6-luna`; heartbeat/simple tasks `openai/gpt-6.1-terra` | `codex` (implicit) | `openai:default` (ChatGPT OAuth) | ChatGPT Plus quota |
+| Chat | `openai/gpt-5.6-sol`, fallback `openai/gpt-5.6-luna`; heartbeat and active cron jobs `openai/gpt-6.1-terra` (per-job `--model` override, VPS only) | `codex` (implicit) | `openai:default` (ChatGPT OAuth) | ChatGPT Plus quota |
 | Audio transcription | `gpt-4o-transcribe` | media | `openai:audio` (API key, pinned via `tools.media.models[].profile`) | Platform API |
 | TTS | `tts-1` | media | `tts.providers.openai.apiKey` | Platform API |
 | Memory embeddings | `text-embedding-3-small` | memory-core | OpenAI API key | Platform API |
