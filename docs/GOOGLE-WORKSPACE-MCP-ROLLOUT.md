@@ -147,8 +147,27 @@ Cron `KI-Wochenrückblick` und alle übrigen Jobs nennen keine Google-Tool-Namen
 
 ## Ablauf
 
-Ansible läuft nicht auf dem Windows-Rechner. `provision.sh` daher aus WSL, einem Linux-Container oder
-macOS starten, oder die Schritte von Hand per SSH nachziehen. Jede Phase braucht Maiks OK.
+Ansible läuft nicht auf dem Windows-Rechner. `scripts/provision-docker.sh` startet `provision.sh` in
+einem Linux-Container (Git Bash, Docker Desktop, fragt die Pulumi-Passphrase ab). Jede Phase braucht
+Maiks OK.
+
+**Probelauf 2026-11-06** (`--tags plugins --check --diff -e openclaw_workspace_backup_optouts=main`):
+Verbindung, Pulumi-Secrets und Inventory funktionieren. Die Google-Schalter erzeugen genau die heutigen
+Server, die alten npm-Pakete melden „ok“. Der Lauf zeigt aber Abweichungen, die nichts mit Google zu
+tun haben und ein echter `--tags plugins`-Lauf mit ausrollen würde:
+
+- `~/.profile` bekäme eine `export PATH="$HOME/.npm-global/bin:$PATH"`-Zeile.
+- `@modelcontextprotocol/server-github` und `@openai/codex` würden global per npm installiert.
+- Claude Code CLI, `~/.openclaw/claude-code-plugins`, `~/.git-credentials` (Plugin-PAT) und
+  12 Claude-Code-Plugins aus `claude_code_plugins` in `openclaw.yml` würden eingerichtet.
+
+Im Check-Modus bricht der Lauf an „Verify plugins directory exists“ ab (das Verzeichnis wird nur
+simuliert); der Google-Teil der Rolle wurde deshalb nicht erreicht. Die Prüfung
+„Assert all agents have GitHub workspace backup configured“ schlägt fehl, weil der Workspace-Sync von
+Hand eingerichtet ist und `workspaceRepoUrl` nicht in Pulumi steht; dauerhaft gehört `main` dann in
+`openclaw_workspace_backup_optouts` oder die URL in Pulumi.
+
+Vor Phase 1 entscheiden: Abweichungen mitnehmen oder `claude_code_plugins` vorher ausklammern.
 
 ### Phase 0: Vorbereitung
 
