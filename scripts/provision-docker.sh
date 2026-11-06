@@ -72,7 +72,7 @@ ADD_HOSTS=()
 while IFS=$'\t' read -r name ip; do
     [ -n "$name" ] && [ -n "$ip" ] && ADD_HOSTS+=(--add-host "$name:$ip")
 done < <(jq -r '.Peer[] | select(.Online == true) | [(.DNSName | rtrimstr(".")), (.TailscaleIPs[0] // "")] | @tsv' \
-    "$WORK/tailscale-status.json")
+    "$WORK/tailscale-status.json" | tr -d '\r')
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "=== Building $IMAGE ==="
