@@ -10,7 +10,7 @@ openclaw_timezone: "Europe/Berlin"
 openclaw_model_primary: "openai/gpt-5.6-sol"
 openclaw_model_fallbacks:
   - "openai/gpt-5.6-luna"
-openclaw_heartbeat_model: "openai/gpt-5.6-luna"
+openclaw_heartbeat_model: "openai/gpt-6.1-terra"
 openclaw_thinking_default: "off"
 
 # Custom model definitions (for models not yet in OpenClaw's built-in registry)
@@ -24,13 +24,13 @@ openclaw_custom_models:
   mode: "merge"
   providers: {}
 nodejs_major_version: 25
-openclaw_version: "2026.10.10"
+openclaw_version: "2026.11.1"
 # Host Claude Code CLI: the claude-cli model runtime and plugin management share
 # one pinned install (@anthropic-ai/claude-code). Update intentionally.
 claude_code_version: "2.1.97"
 # Bump only after reviewing the versioned heartbeat + cron contracts documented
 # in docs/DOCS-REVIEW.md. Provisioning refuses scheduler changes on a mismatch.
-openclaw_docs_reviewed_version: "2026.10.10"
+openclaw_docs_reviewed_version: "2026.11.1"
 # Agent existence never opts into autonomous work. Deployments must explicitly
 # enable scheduled automation per agent in group_vars/openclaw.yml.
 openclaw_scheduled_automation_default: false

@@ -33,9 +33,10 @@ Gateway runs via systemd (not Docker) as unprivileged user. Docker runs sandbox 
 ## Active Model Configuration
 
 **Primary model:** `openai/gpt-5.6-sol` via **ChatGPT Plus OAuth** — no per-token billing, no API key required.
-**Fallback model:** `openai/gpt-5.6-luna` (also via ChatGPT OAuth; also used for heartbeat).
+**Fallback model:** `openai/gpt-5.6-luna` (also via ChatGPT OAuth).
+**Simple tasks / heartbeat:** `openai/gpt-6.1-terra` (ChatGPT OAuth, alias `terra`; per session via `/model terra`). Set on the VPS by hand (not in Ansible): `agents.defaults.models["openai/gpt-6.1-terra"].alias` and the explicit `agents.defaults.modelPolicy.allow` list (`gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-6.1-terra`). A model missing from that list is refused as an override.
 
-> **Since 2026-09-09** the ChatGPT-account Codex backend rejects `gpt-5.4` and `gpt-5.4-mini` with HTTP 400 *"not supported when using Codex with a ChatGPT account"*. Supported there: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` (live list: `~/.openclaw/agents/main/agent/codex-home/models_cache.json` on the VPS). Since OpenClaw 2026.9.x the `openai/` provider routes chat through the ChatGPT OAuth profile, so an API-key fallback like `openai/gpt-5.4-mini` no longer helps.
+> **Since 2026-09-09** the ChatGPT-account Codex backend rejects `gpt-5.4` and `gpt-5.4-mini` with HTTP 400 *"not supported when using Codex with a ChatGPT account"*. Supported there (as of 2026-11-06): `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` (live list: `~/.openclaw/agents/main/agent/codex-home/models_cache.json` on the VPS). Since OpenClaw 2026.9.x the `openai/` provider routes chat through the ChatGPT OAuth profile, so an API-key fallback like `openai/gpt-5.4-mini` no longer helps.
 >
 > **Upgrading to 2026.9.x** requires a state DB migration: the gateway exits with status 78 (`audit-events-v2`) until you stop it and run `openclaw doctor --fix --non-interactive`, then `openclaw plugins enable openclaw-mcp-adapter --accept-capabilities`.
 **Voice transcription (STT):** OpenAI `gpt-4o-transcribe` via the dedicated `openai:audio` API-key auth profile.
@@ -43,7 +44,7 @@ Gateway runs via systemd (not Docker) as unprivileged user. Docker runs sandbox 
 
 | Surface | Model | Runtime | Auth profile | Billing |
 |---------|-------|---------|--------------|---------|
-| Chat, cron, heartbeat | `openai/gpt-5.6-sol`, fallback `openai/gpt-5.6-luna` | `codex` (implicit) | `openai:default` (ChatGPT OAuth) | ChatGPT Plus quota |
+| Chat, cron | `openai/gpt-5.6-sol`, fallback `openai/gpt-5.6-luna`; heartbeat/simple tasks `openai/gpt-6.1-terra` | `codex` (implicit) | `openai:default` (ChatGPT OAuth) | ChatGPT Plus quota |
 | Audio transcription | `gpt-4o-transcribe` | media | `openai:audio` (API key, pinned via `tools.media.models[].profile`) | Platform API |
 | TTS | `tts-1` | media | `tts.providers.openai.apiKey` | Platform API |
 | Memory embeddings | `text-embedding-3-small` | memory-core | OpenAI API key | Platform API |
