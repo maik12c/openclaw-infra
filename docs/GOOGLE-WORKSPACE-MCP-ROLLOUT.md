@@ -169,6 +169,18 @@ Hand eingerichtet ist und `workspaceRepoUrl` nicht in Pulumi steht; dauerhaft ge
 
 Vor Phase 1 entscheiden: Abweichungen mitnehmen oder `claude_code_plugins` vorher ausklammern.
 
+Die Plugins-Rolle ist nicht für den Check-Modus gebaut (über 20 Lese-Tasks liefern dort kein Ergebnis).
+Den neuen Teil habe ich deshalb getrennt geprüft, **in einem lokalen `ubuntu:24.04`-Container**
+(Python 3.12.3 wie auf dem VPS), mit denselben Befehlen, Argumenten und Env-Variablen wie die Rolle:
+
+- uv 0.13.5: Prüfsumme stimmt; `uv tool install --exclude-newer … workspace-mcp==2.3.0` läuft durch,
+  `uv tool list` meldet `workspace-mcp v2.3.0` (passt zur Versionsprüfung im Task).
+- stdio-Handshake und `tools/list`: 29 Tools, exakt die Liste `google_workspace_mcp.tools`.
+- `start_google_auth` (`service_name: gmail`) liefert einen Google-Anmeldelink mit Redirect
+  `http://localhost:8000/oauth2callback`; der Callback lauscht nur auf `127.0.0.1:8000` und `[::1]:8000`.
+
+Nicht geprüft bleibt das Zusammenspiel mit dem openclaw-mcp-adapter auf dem VPS. Das zeigt erst Phase 1.
+
 ### Phase 0: Vorbereitung
 
 1. Sicherungen prüfen: `~/backups/npm-global-pre-sec-20261104-1358.tgz` (npm-global) liegt vor.
