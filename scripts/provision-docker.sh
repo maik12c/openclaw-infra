@@ -25,7 +25,8 @@ set -euo pipefail
 
 PULUMI_VERSION="3.219.0"
 ANSIBLE_CORE_VERSION="2.20.10"
-IMAGE="openclaw-provisioner:pulumi-${PULUMI_VERSION}-ansible-${ANSIBLE_CORE_VERSION}"
+IMAGE_REV="2"   # bump when the Dockerfile below changes
+IMAGE="openclaw-provisioner:pulumi-${PULUMI_VERSION}-ansible-${ANSIBLE_CORE_VERSION}-r${IMAGE_REV}"
 STACK="${PULUMI_STACK_NAME:-prod}"
 SSH_KEY="${OPENCLAW_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
@@ -79,7 +80,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     docker build -t "$IMAGE" - <<DOCKERFILE
 FROM python:3.12-slim
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-      jq openssh-client git curl ca-certificates rsync && rm -rf /var/lib/apt/lists/*
+      jq openssh-client netcat-openbsd git curl ca-certificates rsync && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir "ansible-core==${ANSIBLE_CORE_VERSION}"
 RUN curl -fsSL -o /tmp/pulumi.tgz \
       "https://get.pulumi.com/releases/sdk/pulumi-v${PULUMI_VERSION}-linux-x64.tar.gz" \
@@ -99,7 +100,17 @@ cp /mnt/work/private/Pulumi.*.yaml /work/pulumi/
 mkdir -p /root/.pulumi && rsync -a --exclude plugins /mnt/pulumi/ /root/.pulumi/
 mkdir -p /root/.ssh && install -m 600 /mnt/ssh-key /root/.ssh/id_ed25519
 if [ -f /mnt/codex-auth.json ]; then mkdir -p /root/.codex && install -m 600 /mnt/codex-auth.json /root/.codex/auth.json; fi
-printf "#!/bin/sh\n[ \"\$1 \$2\" = \"status --json\" ] || { echo \"tailscale shim: only status --json\" >&2; exit 2; }\nexec cat /mnt/work/tailscale-status.json\n" > /usr/local/bin/tailscale
+cat > /usr/local/bin/tailscale <<"SHIM"
+#!/bin/sh
+# Replays the host snapshot for `status --json`; `nc` (the inventory
+# ProxyCommand) goes straight over the host Tailscale route.
+case "$1" in
+  status) [ "$2" = "--json" ] && exec cat /mnt/work/tailscale-status.json ;;
+  nc) [ $# -eq 3 ] && exec nc "$2" "$3" ;;
+esac
+echo "tailscale shim: only status --json and nc <host> <port>" >&2
+exit 2
+SHIM
 chmod 755 /usr/local/bin/tailscale
 cd /work/pulumi
 pulumi login --local >/dev/null
