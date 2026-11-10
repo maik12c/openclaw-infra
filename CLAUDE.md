@@ -802,15 +802,7 @@ ssh ubuntu@openclaw-vps 'PATH=/home/ubuntu/.npm-global/bin:$PATH timeout 4 googl
 # Expected: "Google Contacts MCP server running on stdio"
 ```
 
-### 6. GitHub PAT renewal reminder
-
-Token `openclaw-infra-push` expires **2027-02-22**. When it expires:
-1. Generate new token at GitHub → Settings → Developer settings → Fine-grained personal access tokens
-2. Scope: `Contents: read/write`, `Metadata: read` on workspace repo
-3. `pulumi config set githubToken ghp_... --secret`
-4. `ssh ubuntu@openclaw-vps "echo 'ghp_...' > ~/.openclaw/github-tokens/main"` (hot-reloaded automatically by mcp-auth-proxy)
-
-### 8. openclaw-mcp-adapter activation + tool registration fix (OpenClaw v2026.5.x)
+### 6. openclaw-mcp-adapter activation + tool registration fix (OpenClaw v2026.5.x)
 
 **Problem (three-part):** OpenClaw v2026.5.x broke global plugin tool loading in three ways:
 1. Plugins require `"activation": {"onStartup": true}` in manifest or are silently skipped
