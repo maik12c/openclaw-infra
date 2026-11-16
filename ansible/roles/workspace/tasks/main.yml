@@ -24,134 +24,153 @@
     label: "{{ item.0.agent_id }}.{{ item.1 }}"
   register: workspace_existing_units
 
-- name: Stop existing workspace units during installation
-  ansible.builtin.systemd:
-    name: "{{ item.stat.path | basename }}"
-    state: stopped
-    enabled: "{{ false if item.item.1 == 'timer' else omit }}"
-    scope: user
-  environment:
-    XDG_RUNTIME_DIR: /run/user/1000
-  loop: "{{ workspace_existing_units.results }}"
-  loop_control:
-    label: "{{ item.item.0.agent_id }}.{{ item.item.1 }}"
-  when: item.stat.exists
+# A failure must not leave every agent without backup: the timers stopped below come
+# back on failure too. Every fallible step after the stop (host-key read, deploy keys,
+# image build, sync) belongs inside this block, so any failure restores them.
+# (Upstream pandysp/openclaw-infra#69)
+- name: Synchronize workspaces and restore their timers
+  block:
+    - name: Stop existing workspace units during installation
+      ansible.builtin.systemd:
+        name: "{{ item.stat.path | basename }}"
+        state: stopped
+        enabled: "{{ false if item.item.1 == 'timer' else omit }}"
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: /run/user/1000
+      loop: "{{ workspace_existing_units.results }}"
+      loop_control:
+        label: "{{ item.item.0.agent_id }}.{{ item.item.1 }}"
+      when: item.stat.exists
 
-# The pre-multi-agent layout ran Git on the host. Retire it before the first
-# isolated run so no host-side Git can race the container on the same repository.
-- name: Check legacy workspace timer
-  ansible.builtin.stat:
-    path: /home/ubuntu/.config/systemd/user/workspace-git-sync.timer
-  register: workspace_legacy_timer
+    # The pre-multi-agent layout ran Git on the host. Retire it before the first
+    # isolated run so no host-side Git can race the container on the same repository.
+    - name: Check legacy workspace timer
+      ansible.builtin.stat:
+        path: /home/ubuntu/.config/systemd/user/workspace-git-sync.timer
+      register: workspace_legacy_timer
 
-- name: Stop legacy workspace timer
-  ansible.builtin.systemd:
-    name: workspace-git-sync.timer
-    state: stopped
-    enabled: false
-    scope: user
-  environment:
-    XDG_RUNTIME_DIR: /run/user/1000
-  when: workspace_legacy_timer.stat.exists
+    - name: Stop legacy workspace timer
+      ansible.builtin.systemd:
+        name: workspace-git-sync.timer
+        state: stopped
+        enabled: false
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: /run/user/1000
+      when: workspace_legacy_timer.stat.exists
 
-- name: Remove legacy workspace files
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /home/ubuntu/.config/systemd/user/workspace-git-sync.service
-    - /home/ubuntu/.config/systemd/user/workspace-git-sync.timer
-    - /home/ubuntu/.local/bin/workspace-git-sync.sh
-    - /home/ubuntu/.ssh/config.d/workspace
+    - name: Remove legacy workspace files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /home/ubuntu/.config/systemd/user/workspace-git-sync.service
+        - /home/ubuntu/.config/systemd/user/workspace-git-sync.timer
+        - /home/ubuntu/.local/bin/workspace-git-sync.sh
+        - /home/ubuntu/.ssh/config.d/workspace
 
-- name: Ensure workspace support directories exist
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    mode: "{{ item.mode }}"
-  loop:
-    - { path: /home/ubuntu/.ssh, mode: "0700" }
-    - { path: /home/ubuntu/.openclaw, mode: "0700" }
-    - { path: /home/ubuntu/.config/systemd/user, mode: "0755" }
-    - { path: /home/ubuntu/.local/share/workspace-sync-build, mode: "0755" }
+    - name: Ensure workspace support directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /home/ubuntu/.ssh, mode: "0700" }
+        - { path: /home/ubuntu/.openclaw, mode: "0700" }
+        - { path: /home/ubuntu/.config/systemd/user, mode: "0755" }
+        - { path: /home/ubuntu/.local/share/workspace-sync-build, mode: "0755" }
 
-- name: Install deploy keys
-  ansible.builtin.copy:
-    # OpenSSH requires a final newline, including for values read through shells.
-    content: "{{ (_deploy_key | trim) ~ '\n' if _deploy_key | trim | length > 0 else undef('Workspace deploy key is missing') }}"
-    dest: "/home/ubuntu/.ssh/{{ item.key_file }}"
-    mode: "0600"
-  vars:
-    _deploy_key: >-
-      {{ (openclaw_workspaces | selectattr('agent_id', 'equalto', item.agent_id) | first).deploy_key
-         if openclaw_workspaces is defined else lookup('vars', item.deploy_key_var) }}
-  no_log: true
-  loop: "{{ active_workspaces }}"
-  loop_control:
-    label: "{{ item.agent_id }}"
+    - name: Install deploy keys
+      ansible.builtin.copy:
+        # OpenSSH requires a final newline, including for values read through shells.
+        content: "{{ (_deploy_key | trim) ~ '\n' if _deploy_key | trim | length > 0 else undef('Workspace deploy key is missing') }}"
+        dest: "/home/ubuntu/.ssh/{{ item.key_file }}"
+        mode: "0600"
+      vars:
+        _deploy_key: >-
+          {{ (openclaw_workspaces | selectattr('agent_id', 'equalto', item.agent_id) | first).deploy_key
+             if openclaw_workspaces is defined else lookup('vars', item.deploy_key_var) }}
+      no_log: true
+      loop: "{{ active_workspaces }}"
+      loop_control:
+        label: "{{ item.agent_id }}"
 
-- name: Read official GitHub SSH host keys
-  ansible.builtin.uri:
-    url: https://api.github.com/meta
-    return_content: true
-  register: workspace_github_meta
+    - name: Read official GitHub SSH host keys
+      ansible.builtin.uri:
+        url: https://api.github.com/meta
+        return_content: true
+      register: workspace_github_meta
 
-- name: Require GitHub SSH host keys
-  ansible.builtin.assert:
-    that:
-      - workspace_github_meta.json.ssh_keys is defined
-      - workspace_github_meta.json.ssh_keys | length > 0
-    fail_msg: GitHub did not provide SSH host keys; refusing unauthenticated Git access.
+    - name: Require GitHub SSH host keys
+      ansible.builtin.assert:
+        that:
+          - workspace_github_meta.json.ssh_keys is defined
+          - workspace_github_meta.json.ssh_keys | length > 0
+        fail_msg: GitHub did not provide SSH host keys; refusing unauthenticated Git access.
 
-- name: Install GitHub known hosts for isolated sync
-  ansible.builtin.copy:
-    content: "{{ (workspace_github_meta.json.ssh_keys | map('regex_replace', '^', 'github.com ') | join('\n')) ~ '\n' }}"
-    dest: /home/ubuntu/.ssh/workspace-github-known-hosts
-    mode: "0644"
+    - name: Install GitHub known hosts for isolated sync
+      ansible.builtin.copy:
+        content: "{{ (workspace_github_meta.json.ssh_keys | map('regex_replace', '^', 'github.com ') | join('\n')) ~ '\n' }}"
+        dest: /home/ubuntu/.ssh/workspace-github-known-hosts
+        mode: "0644"
 
-- name: Install workspace sync image sources
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/home/ubuntu/.local/share/workspace-sync-build/{{ item }}"
-    mode: "0644"
-  loop:
-    - Dockerfile
-    - workspace-sync-entrypoint.sh
-    - workspace-sync.sh
-    - gitignore-workspace
-  register: workspace_image_sources
+    - name: Install workspace sync image sources
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/home/ubuntu/.local/share/workspace-sync-build/{{ item }}"
+        mode: "0644"
+      loop:
+        - Dockerfile
+        - workspace-sync-entrypoint.sh
+        - workspace-sync.sh
+        - gitignore-workspace
+      register: workspace_image_sources
 
-- name: Check workspace sync image
-  ansible.builtin.command: docker image inspect openclaw-workspace-sync:latest
-  register: workspace_image
-  changed_when: false
-  failed_when: false
+    - name: Check workspace sync image
+      ansible.builtin.command: docker image inspect openclaw-workspace-sync:latest
+      register: workspace_image
+      changed_when: false
+      failed_when: false
 
-- name: Build workspace sync image
-  ansible.builtin.command:
-    argv:
-      - docker
-      - build
-      - --tag
-      - openclaw-workspace-sync:latest
-      - /home/ubuntu/.local/share/workspace-sync-build
-  when: workspace_image.rc != 0 or workspace_image_sources.changed
+    - name: Build workspace sync image
+      ansible.builtin.command:
+        argv:
+          - docker
+          - build
+          - --tag
+          - openclaw-workspace-sync:latest
+          - /home/ubuntu/.local/share/workspace-sync-build
+      when: workspace_image.rc != 0 or workspace_image_sources.changed
 
-- name: Install and synchronize each workspace
-  ansible.builtin.include_tasks: sync.yml
-  loop: "{{ active_workspaces }}"
-  loop_control:
-    loop_var: workspace
-    label: "{{ workspace.agent_id }}"
+    - name: Install and synchronize each workspace
+      ansible.builtin.include_tasks: sync.yml
+      loop: "{{ active_workspaces }}"
+      loop_control:
+        loop_var: workspace
+        label: "{{ workspace.agent_id }}"
 
-- name: Enable workspace timers after successful synchronization
-  ansible.builtin.systemd:
-    name: "workspace-git-sync-{{ item.agent_id }}.timer"
-    state: started
-    enabled: true
-    scope: user
-  environment:
-    XDG_RUNTIME_DIR: /run/user/1000
-  loop: "{{ active_workspaces }}"
-  loop_control:
-    label: "{{ item.agent_id }}"
+    - name: Enable workspace timers after successful synchronization
+      ansible.builtin.systemd:
+        name: "workspace-git-sync-{{ item.agent_id }}.timer"
+        state: started
+        enabled: true
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: /run/user/1000
+      loop: "{{ active_workspaces }}"
+      loop_control:
+        label: "{{ item.agent_id }}"
+
+  always:
+    - name: Restore the workspace timers that existed before this run
+      ansible.builtin.systemd:
+        name: "{{ item.stat.path | basename }}"
+        state: started
+        enabled: true
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: /run/user/1000
+      loop: "{{ workspace_existing_units.results | selectattr('item.1', 'equalto', 'timer') | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item.0.agent_id }}"
