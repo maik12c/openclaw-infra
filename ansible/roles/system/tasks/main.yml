@@ -62,6 +62,7 @@
   register: node_installed
   changed_when: false
   failed_when: false
+  check_mode: false  # read-only; the version comparison below needs real output in --check runs
 
 # A host on another major line (e.g. the former Node 25 pin, which OpenClaw does not
 # support) is switched to the nodejs_major_version NodeSource repository and upgraded.
