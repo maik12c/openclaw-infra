@@ -761,6 +761,10 @@
             "accountId": account_id
         }
     }
+    # Only refresh a legacy store that still exists. Since 2026.9 the gateway keeps
+    # its OAuth profile in SQLite and imports a reappearing oauth.json on load, which
+    # would hand the gateway this machine's refresh token; both sides refreshing the
+    # same rotating token then log each other out.
     existing = {}
     if oauth_path.exists():
         try:
@@ -768,7 +772,7 @@
         except Exception:
             pass
     existing_entry = existing.get("openai-codex", {})
-    if existing_entry.get("access") != access:
+    if oauth_path.exists() and existing_entry.get("access") != access:
         oauth_path.write_text(json.dumps(oauth_data, indent=2) + "\n")
         oauth_path.chmod(0o600)
         changed.append("credentials/oauth.json")
