@@ -373,8 +373,9 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
-    INSTALLED=$(openclaw plugins list 2>/dev/null | grep -c "@openclaw/codex" || echo "0")
-    if [ "$INSTALLED" -gt "0" ]; then
+    # 2026.11 lists the plugin by id (codex), not by package name; any loaded copy counts.
+    if openclaw plugins list --json 2>/dev/null | sed -E '/^\[[A-Za-z][^]]*\]/d' |
+        jq -e '(if type == "array" then . else .plugins end) | any(.id == "codex" and .status == "loaded")' >/dev/null; then
       echo "OK"
       exit 0
     fi

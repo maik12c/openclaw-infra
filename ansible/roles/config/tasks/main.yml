@@ -343,7 +343,7 @@
         # 2026.6.1 plugin split) — without it model turns fail with MissingAgentHarnessError.
         {# WhatsApp/Discord ship as external channel plugins again since 2026.5.12 #}
         {# (installed by each channel role in plugin.yml); allowlist when configured. #}
-        {% set plugin_allow = ["device-pair","memory-core","phone-control","talk-voice","telegram","openai"] %}
+        {% set plugin_allow = ["device-pair","memory-core","active-memory","phone-control","talk-voice","telegram","openai","codex"] %}
         {% if xai_api_key is defined and xai_api_key | length > 0 %}
         {%   set _ = plugin_allow.append("xai") %}
         {% endif %}
