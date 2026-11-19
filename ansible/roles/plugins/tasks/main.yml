@@ -2234,7 +2234,7 @@
     export XDG_RUNTIME_DIR=/run/user/1000
     # The jq // operator treats false as "missing" and returns the RHS, so we
     # use an explicit null check to distinguish false from an absent key.
-    RESULT=$(jq -r '.agents.defaults.memorySearch.enabled | if . == null then "unset" else tostring end' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "unset")
+    RESULT=$(jq -r '.memory.search.enabled | if . == null then "unset" else tostring end' /home/ubuntu/.openclaw/openclaw.json 2>/dev/null || echo "unset")
     echo "$RESULT"
   args:
     executable: /bin/bash
@@ -2245,7 +2245,7 @@
 - name: Disable built-in memorySearch (replaced by qmd)
   ansible.builtin.shell: |
     export XDG_RUNTIME_DIR=/run/user/1000
-    openclaw config set agents.defaults.memorySearch.enabled false
+    openclaw config set memory.search.enabled false
   args:
     executable: /bin/bash
   when:

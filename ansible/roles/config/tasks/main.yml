@@ -36,7 +36,9 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export XDG_RUNTIME_DIR=/run/user/1000
-    if openclaw models auth list --agent main --provider openai 2>/dev/null | grep -q "openai:audio"; then
+    # models auth needs offline state ownership since 2026.11; status also works while the gateway runs.
+    if openclaw models status --agent main --json 2>/dev/null | sed -E '/^\[[A-Za-z][^]]*\]/d' |
+        jq -e '[.auth.oauth.profiles[]?.profileId] | index("openai:audio")' >/dev/null; then
         echo "OK"; exit 0
     fi
     printf '%s' "$OPENAI_KEY" | openclaw models auth paste-api-key --agent main --provider openai --profile-id openai:audio >/dev/null
@@ -278,7 +280,6 @@
 
         # Control UI
         check_set gateway.controlUi.enabled true
-        check_set gateway.controlUi.allowInsecureAuth false
 
         # Auth: Tailscale identity
         check_set gateway.auth.allowTailscale true
@@ -394,17 +395,12 @@
 
         # Timezone
         check_set agents.defaults.userTimezone "{{ openclaw_timezone }}"
-        check_set agents.defaults.envelopeTimezone user
 
         # Agent timeout: max seconds per conversation turn (default 600 = 10min)
         check_set agents.defaults.timeoutSeconds "{{ openclaw_agent_timeout_seconds }}"
 
         # Message queue: collect messages while agent is busy, coalesce into one followup turn
         check_set messages.queue.mode collect
-
-        # Auth cooldown: reset error count after N hours
-        # Prevents timeouts from compounding into multi-hour lockouts
-        check_set auth.cooldowns.failureWindowHours "{{ openclaw_cooldown_failure_window_hours }}"
 
         # Concurrency: allow more parallel sessions across all agents
         check_set agents.defaults.maxConcurrent "{{ openclaw_max_concurrent }}"
@@ -413,12 +409,10 @@
         # Context pruning: trim stale tool outputs after 15m, keep last 3 assistant responses
         check_set agents.defaults.contextPruning.mode cache-ttl
         check_set agents.defaults.contextPruning.ttl 15m
-        check_set agents.defaults.contextPruning.keepLastAssistants "3"
 
         # Compaction safeguard: flush memories before context compression
         # Prevents silent loss of in-context state (see openclaw/openclaw#5429)
         check_set agents.defaults.compaction.mode "{{ openclaw_compaction_mode }}"
-        check_set agents.defaults.compaction.reserveTokensFloor "{{ openclaw_compaction_reserve_tokens_floor }}"
         check_set_json agents.defaults.compaction.memoryFlush "$(cat /tmp/ansible-compaction-memoryflush)"
         # Show "Compacting context..." notice in chat (2026.4.2+, default: true)
         check_set_json agents.defaults.compaction.notifyUser '{{ openclaw_compaction_notify_user | to_json }}'
@@ -482,15 +476,13 @@
 
         # Voice output (text-to-speech) — responds with voice when user sends voice message
         {% if openai_api_key is defined and openai_api_key | length > 0 %}
-        check_set messages.tts.provider "{{ openclaw_tts_provider }}"
-        check_set messages.tts.auto "{{ openclaw_tts_auto }}"
+        check_set tts.provider "{{ openclaw_tts_provider }}"
+        check_set tts.auto "{{ openclaw_tts_auto }}"
         {% endif %}
 
         # Telegram: suppress error reply messages (silent = user sees nothing on failure)
         check_set_json channels.telegram.silentErrorReplies '{{ openclaw_telegram_silent_error_replies | lower }}'
 
-        # Health monitor: faster detection of silent channel disconnections
-        check_set gateway.channelStaleEventThresholdMinutes "{{ openclaw_health_monitor_stale_minutes }}"
         {# WhatsApp (Baileys) has unpredictable idle event cadence - disable to prevent restart loops #}
         check_set_json channels.whatsapp.healthMonitor.enabled 'false'
 
