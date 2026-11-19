@@ -59,7 +59,7 @@
         OUT=$(openclaw cron remove "$PROBE" 2>&1)
         RC=$?
         set -e
-        if [ "$RC" -eq 0 ] || printf '%s' "$OUT" | grep -qiF 'invalid cron.remove params: id not found'; then
+        if [ "$RC" -eq 0 ] || printf '%s' "$OUT" | grep -qiE 'invalid cron.remove params: id not found|Automation not found'; then
             echo "Gateway ready; cli holds operator.admin via silent first-contact grant"
             exit 0
         fi
