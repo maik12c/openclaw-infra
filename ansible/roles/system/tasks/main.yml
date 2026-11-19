@@ -63,8 +63,12 @@
   changed_when: false
   failed_when: false
 
+# A host on another major line (e.g. the former Node 25 pin, which OpenClaw does not
+# support) is switched to the nodejs_major_version NodeSource repository and upgraded.
 - name: Install Node.js via NodeSource
-  when: node_installed.rc != 0
+  when: >-
+    node_installed.rc != 0
+    or (node_installed.stdout | regex_search('^v([0-9]+)', '\\1') | first) != (nodejs_major_version | string)
   block:
     - name: Add NodeSource GPG key and repository
       ansible.builtin.shell: |
@@ -75,7 +79,7 @@
     - name: Install nodejs package
       ansible.builtin.apt:
         name: nodejs
-        state: present
+        state: latest
         update_cache: true
 
 # The dist-upgrade above normally lifts Node to the floor already. This catches a host

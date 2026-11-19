@@ -35,13 +35,13 @@ nodejs_min_version: "26.12.1"
 debian_ca_certificates_min_version: "20250419+deb13u1"
 # uv copied into the sandbox image; 0.13.4 has uv's eMudhra trust fix.
 uv_version: "0.13.4"
-openclaw_version: "2026.11.1"
+openclaw_version: "2026.11.4"
 # Host Claude Code CLI: the claude-cli model runtime and plugin management share
 # one pinned install (@anthropic-ai/claude-code). Update intentionally.
 claude_code_version: "2.1.97"
 # Bump only after reviewing the versioned heartbeat + cron contracts documented
 # in docs/DOCS-REVIEW.md. Provisioning refuses scheduler changes on a mismatch.
-openclaw_docs_reviewed_version: "2026.11.1"
+openclaw_docs_reviewed_version: "2026.11.4"
 # Agent existence never opts into autonomous work. Deployments must explicitly
 # enable scheduled automation per agent in group_vars/openclaw.yml.
 openclaw_scheduled_automation_default: false

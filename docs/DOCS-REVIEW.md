@@ -2,9 +2,9 @@
 
 Tracking which [OpenClaw docs](https://docs.openclaw.ai) pages have been reviewed against our setup.
 
-- Reviewed OpenClaw version: `2026.11.1`
-- Reviewed on: `2026-11-06`
-- Latest docs compared on: `2026-11-06`
+- Reviewed OpenClaw version: `2026.11.4`
+- Reviewed on: `2026-11-19`
+- Latest docs compared on: `2026-11-19`
 
 The versioned docs and the published executable for `openclaw_version` define
 the provisioning contract. Mutable latest docs are a drift signal only. A
