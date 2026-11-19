@@ -22,9 +22,7 @@
       dest: /tmp/ansible-model-fallbacks
     - content: >-
         {{ {'enabled': openclaw_compaction_memory_flush,
-            'softThresholdTokens': openclaw_compaction_memory_flush_threshold,
-            'prompt': openclaw_compaction_memory_flush_prompt,
-            'systemPrompt': openclaw_compaction_memory_flush_system_prompt} | to_json }}
+            'softThresholdTokens': openclaw_compaction_memory_flush_threshold} | to_json }}
       dest: /tmp/ansible-compaction-memoryflush
 
 # Keep chat on the ChatGPT/Codex OAuth profile and give audio its own API-key
