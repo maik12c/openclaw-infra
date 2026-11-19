@@ -399,6 +399,11 @@
   changed_when: false
   check_mode: false
 
+# Set before the first user (the Google Calendar patch right after the npm install).
+- name: Set npm prefix bin path fact
+  ansible.builtin.set_fact:
+    npm_prefix_bin: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin"
+
 - name: Ensure npm global bin is in PATH profile
   ansible.builtin.lineinfile:
     path: /home/ubuntu/.profile
@@ -694,10 +699,6 @@
       qmd binary not found but qmd servers are configured in group_vars.
       Run the qmd role first: ./scripts/provision.sh --tags qmd,plugins
   when: _openclaw_mcp_servers | selectattr('type', 'equalto', 'qmd') | list | length > 0
-
-- name: Set npm prefix bin path fact
-  ansible.builtin.set_fact:
-    npm_prefix_bin: "{{ (npm_prefix.stdout_lines | last) | trim }}/bin"
 
 - name: Resolve node-exec-mcp binary path
   ansible.builtin.shell: |
