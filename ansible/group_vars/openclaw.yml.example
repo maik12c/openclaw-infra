@@ -109,6 +109,10 @@
 #     heartbeat_every: "15m"
 
 # --- Cron jobs (override to customize schedules per agent) ---
+# Set openclaw_cron_reconcile: false when cron jobs are maintained by hand on the
+# host; provisioning then neither adds, edits nor disables any of them.
+# openclaw_cron_reconcile: false
+#
 # all.yml provides generic main-agent defaults (daily standup + night shift).
 # Override here for custom prompts, additional agents, or personal schedules.
 #

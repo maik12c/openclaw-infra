@@ -8,12 +8,16 @@
 - name: Fix stale heartbeat session delivery targets
   ansible.builtin.include_tasks: session-cleanup.yml
 
+# openclaw_cron_reconcile: false leaves every live cron job alone, for deployments
+# whose jobs are maintained by hand on the host. Reconciliation otherwise disables
+# enabled jobs of agents without scheduled_automation_enabled, managed or not.
 - name: Configure cron jobs
   ansible.builtin.include_tasks: cron.yml
   when: >-
+    (openclaw_cron_reconcile | default(true) | bool) and (
     (telegram_user_id is defined and telegram_user_id | length > 0) or
     (telegram_group_id is defined and telegram_group_id | length > 0) or
     (openclaw_agents | selectattr('deliver_channel', 'defined')
       | selectattr('deliver_channel', 'equalto', 'whatsapp') | list | length > 0) or
     (openclaw_agents | selectattr('deliver_channel', 'defined')
-      | selectattr('deliver_channel', 'equalto', 'discord') | list | length > 0)
+      | selectattr('deliver_channel', 'equalto', 'discord') | list | length > 0))
