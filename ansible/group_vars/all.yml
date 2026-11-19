@@ -23,14 +23,25 @@ openclaw_thinking_default: "off"
 openclaw_custom_models:
   mode: "merge"
   providers: {}
-nodejs_major_version: 25
-openclaw_version: "2026.11.1"
+# OpenClaw 2026.9.35+ requires Node >=24.22.1 <25 or >=26.12.1 (patched TLS roots:
+# 26.12.1 rejects the compromised eMudhra keys, nodejs/node#66871). Node 25 is not
+# supported. Provisioning's dist-upgrade installs the newest NodeSource build; the
+# system role then refuses a Node older than nodejs_min_version.
+nodejs_major_version: 26
+nodejs_min_version: "26.12.1"
+# Lowest Debian ca-certificates inside the sandbox and workspace-sync images: this
+# release drops the eMudhra roots. An image built with an older one is rebuilt from
+# scratch on the next run (ansible/roles/docker/tasks/image-ca-floor.yml).
+debian_ca_certificates_min_version: "20250419+deb13u1"
+# uv copied into the sandbox image; 0.13.4 has uv's eMudhra trust fix.
+uv_version: "0.13.4"
+openclaw_version: "2026.11.4"
 # Host Claude Code CLI: the claude-cli model runtime and plugin management share
 # one pinned install (@anthropic-ai/claude-code). Update intentionally.
 claude_code_version: "2.1.97"
 # Bump only after reviewing the versioned heartbeat + cron contracts documented
 # in docs/DOCS-REVIEW.md. Provisioning refuses scheduler changes on a mismatch.
-openclaw_docs_reviewed_version: "2026.11.1"
+openclaw_docs_reviewed_version: "2026.11.4"
 # Agent existence never opts into autonomous work. Deployments must explicitly
 # enable scheduled automation per agent in group_vars/openclaw.yml.
 openclaw_scheduled_automation_default: false

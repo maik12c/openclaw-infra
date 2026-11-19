@@ -40,6 +40,8 @@ Gateway runs via systemd (not Docker) as unprivileged user. Docker runs sandbox 
 
 > **Since 2026-09-09** the ChatGPT-account Codex backend rejects `gpt-5.4` and `gpt-5.4-mini` with HTTP 400 *"not supported when using Codex with a ChatGPT account"*. Supported there (as of 2026-11-06): `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` (live list: `~/.openclaw/agents/main/agent/codex-home/models_cache.json` on the VPS). Since OpenClaw 2026.9.x the `openai/` provider routes chat through the ChatGPT OAuth profile, so an API-key fallback like `openai/gpt-5.4-mini` no longer helps.
 >
+> **OpenClaw pin: 2026.11.4** (2026-11-19). **Do not bump to 2026.11.5+ yet:** that release retires heartbeat config (`agents.entries.<id>.heartbeat`) and `openclaw doctor --fix` converts heartbeats into ordinary automation jobs. The agents/heartbeat role and `scripts/check-openclaw-contract.sh` must be reworked first.
+>
 > **Upgrading to 2026.9.x** requires a state DB migration: the gateway exits with status 78 (`audit-events-v2`) until you stop it and run `openclaw doctor --fix --non-interactive`, then `openclaw plugins enable openclaw-mcp-adapter --accept-capabilities`.
 **Voice transcription (STT):** OpenAI `gpt-4o-transcribe` via the dedicated `openai:audio` API-key auth profile.
 **Voice output (TTS):** OpenAI `tts-1`, voice `onyx` (own key under `tts.providers.openai.apiKey`) — agent replies with a Telegram voice bubble when user sends a voice message (`auto: "inbound"`).
@@ -233,7 +235,7 @@ openclaw status              # Session health
 - Obsidian Sync is out of Phoenix scope (decided 2026-09-25). The role picks the cloud vault by agent ID (`<agent>-workspace`), so a staging run would attach the public staging backup to the real vault; staging therefore never runs it and receives no Obsidian credentials. Check it read-only on production instead: `systemctl --user status obsidian-headless-main`, `ob sync-status --path ~/.openclaw/workspace`.
 - Phoenix runs `scripts/test-workspace-isolation.sh` on the staging VPS: a controlled Git hook in the public staging workspace proves the sync unit executes hooks as UID 1000 with no capabilities, no host config or Docker socket, and no route to the credential proxy (an unrestricted control container proves the proxy is reachable), then confirms the push by anonymous readback and removes its fixture.
 - The staging server joins the tailnet as `tag:openclaw-staging` with a key minted per run by the CI OAuth client (`TS_OAUTH_CLIENT_ID`/`TS_OAUTH_SECRET`, tag `tag:ci`): single use, ephemeral, pre-authorized, one hour. No stored auth key exists to expire.
-- The tailnet policy (Tailscale admin console, not this repo) makes `tag:ci` the owner of `tag:openclaw-staging`, grants that tag **no source rights** (a one-hour agent host with real credentials must not reach your devices, production or other servers), allows SSH as `ubuntu` from `tag:ci` and the owner, and pins all of this with policy tests. `tag:server` stays the other project's tag.
+- The tailnet policy (Tailscale admin console, not this repo) makes `tag:ci` the owner of `tag:openclaw-staging` and isolates that tag both ways: it has **no source rights** (a one-hour agent host with real credentials must not reach your devices, production or other servers), and only `tag:ci` may reach it (SSH as `ubuntu`), so it never even sees your devices; there is no owner SSH into a running Phoenix server. `tag:ci` itself reaches only `tag:server` and `tag:openclaw-staging`, never personal devices or the untagged production server. Policy tests pin all of this, and `Resolve staging host` fails if the staging server sees any peer other than a CI runner. `tag:server` stays the other project's tag.
 - `staging.yml` binds the run name, authenticated Tailscale peer and created server IP. Ansible also uses the peer's advertised host keys; a separate SSH probe alone does not authenticate Ansible's connection.
 - Teardown first releases the run's own stale Pulumi lock (a timed-out step kills Pulumi and leaves one), then destroys. It deletes only the proven node's API device ID, then reads it back as absent. If deploy failed before proving a node, only a device with the run's exact name **and** exactly `tag:openclaw-staging` (mintable only via `tag:ci`) counts as the run's own; a name alone never does. Unrelated tailnet changes do not invalidate cleanup. Missing ownership or failed cleanup keeps the staging checkpoint for investigation.
 - Deploy retries only on Hetzner `resource_unavailable` (placement rejected before any server exists): production's `cx43` in `nbg1 → fsn1 → hel1`, then the same-class `cpx42` in the same order. Every other failure stops immediately.
@@ -318,6 +320,14 @@ openclaw security audit --deep
 ```
 
 **Expected output (as of 2026.6.1):** `0 critical · 3 warn · 2 info` — run it **on the VPS via SSH** (running locally audits your Mac instead). The 3 warnings flag deliberate config and are accepted: `dangerouslyAllowExternalBindSources` (sandbox bind mounts), `tools.exec.security=full` (gateway exec gated by `elevated=false` + node-side approvals), and the multi-user heuristic (Telegram/Discord group allowlists — personal deployment, one trusted operator).
+
+### Check TLS Trust
+
+```bash
+./scripts/verify-tls-trust.sh openclaw-vps.<tailnet>.ts.net
+```
+
+Connects from the installed Node, every running Node service (on the Node it actually runs), and Node, Python, curl and uv inside each OpenClaw image to the 12 unsafe test sites of the October 2026 eMudhra incident and 4 healthy controls. Every target must reject all 12 and reach all 4. Two floors in `group_vars/all.yml` keep it passing: provisioning refuses host Node below `nodejs_min_version` (26.12.1; Node 25 is not supported by OpenClaw) and restarts services still running a replaced program after any upgrade; images built with Debian `ca-certificates` below `debian_ca_certificates_min_version` are rebuilt from scratch on the next run. A failure that says "inconclusive" means a test site could not be reached, not that it was trusted.
 
 ### Destroy Infrastructure
 
@@ -654,7 +664,7 @@ All sessions (including web chat) run in Docker containers with bridge networkin
 
 **Network:** Bridge (outbound internet for web research/git push). MCP containers (Codex, Claude Code, Pi) use a separate `codex-proxy-net`. Sandbox containers can't reach the credential proxy.
 
-**Custom image:** Two layers built locally: base (`openclaw-sandbox:trixie`, Debian 13) + custom (`openclaw-sandbox-custom:latest`). Neither pulled from registry. Rebuild: `./scripts/provision.sh --tags sandbox -e force_sandbox_rebuild=true`.
+**Custom image:** Two layers built locally: base (`openclaw-sandbox:trixie`, Debian 13) + custom (`openclaw-sandbox-custom:latest`). Neither pulled from registry. Rebuild: `./scripts/provision.sh --tags sandbox -e force_sandbox_rebuild=true`. A base image whose Debian `ca-certificates` predates `debian_ca_certificates_min_version` is rebuilt from scratch automatically; uv is pinned to `uv_version`.
 
 **Config:**
 ```
