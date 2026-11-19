@@ -102,8 +102,7 @@ node_exec_enabled: false
 # Node ID is NOT configured here — it's dynamic (changes on re-pairing).
 # Pin it manually after pairing: openclaw config set tools.exec.node <id>
 openclaw_exec_host: "sandbox"
-openclaw_exec_security: "full"       # Unrestricted in sandbox/node; gateway blocked by elevated=false
-openclaw_exec_ask: "off"             # No approval prompts (auto-approve node, auto-deny gateway)
+openclaw_exec_mode: "full"  # was security=full + ask=off: unrestricted in sandbox/node; gateway blocked by elevated=false
 
 # Sandbox settings
 openclaw_sandbox_mode: "all"
