@@ -763,7 +763,7 @@
     }
     # Only refresh a legacy store that still exists. Since 2026.9 the gateway keeps
     # its OAuth profile in SQLite and imports a reappearing oauth.json on load, which
-    # would hand the gateway this machine's refresh token; both sides refreshing the
+    # would hand the gateway the refresh token of the control machine; both sides refreshing the
     # same rotating token then log each other out.
     existing = {}
     if oauth_path.exists():
