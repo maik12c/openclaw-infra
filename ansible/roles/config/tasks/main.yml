@@ -269,9 +269,9 @@
             fi
         }
 
-        # Tailscale Serve
+        # Tailscale Serve (its routes end with the gateway since 2026.8.x; resetOnExit was retired
+        # and 2026.11 rejects the key)
         check_set gateway.tailscale.mode serve
-        check_set gateway.tailscale.resetOnExit true
 
         # Trusted proxies: localhost + Tailscale CGNAT range
         check_set_json gateway.trustedProxies '["127.0.0.1", "100.64.0.0/10"]'
